@@ -1,0 +1,223 @@
+{
+  "_comment": "Curated corpus for the Lenny Growth Assistant. Content is NOT vendored into this repo: the upstream archive carries no licence, so we pin identity + integrity and fetch at ingest time into a git-ignored data/ directory.",
+  "source_repo": "https://github.com/ChatPRD/lennys-podcast-transcripts",
+  "corpus_commit": "be8ab89a890a833cbba2c892178f823fff178c65",
+  "path_template": "episodes/{slug}/transcript.md",
+  "raw_url_template": "https://raw.githubusercontent.com/ChatPRD/lennys-podcast-transcripts/{commit}/episodes/{slug}/transcript.md",
+  "selection_rule": "Deterministic and reproducible from the pinned commit: rank every episode by how many of the eight growth/product topic files in index/ list it; tie-break alphabetically by slug; take the top 20. 191 episodes ranked; the cut falls cleanly (2 episodes at 4 topics, 22 at 3).",
+  "selection_topics": [
+    "growth-strategy",
+    "product-led-growth",
+    "retention",
+    "experimentation",
+    "product-market-fit",
+    "product-management",
+    "startup-growth",
+    "product-strategy"
+  ],
+  "episode_count": 20,
+  "episodes": [
+    {
+      "slug": "christopher-miller",
+      "sha256": "822532f0356738c538b258031f75bc35af2183a65964929235b5a102fa5c7aec",
+      "bytes": 96451,
+      "topics": [
+        "experimentation",
+        "growth-strategy",
+        "product-led-growth",
+        "product-management"
+      ]
+    },
+    {
+      "slug": "gibson-biddle",
+      "sha256": "b6633408da71fa528f94dadb362a74174b5b89563b50bf74a924761a6822cf45",
+      "bytes": 71476,
+      "topics": [
+        "experimentation",
+        "product-management",
+        "product-strategy",
+        "retention"
+      ]
+    },
+    {
+      "slug": "annie-pearl",
+      "sha256": "d5f5e87a88cc516ba93d10978892ca553caecae9003ce694518fbbf698cefa46",
+      "bytes": 74812,
+      "topics": [
+        "product-led-growth",
+        "product-management",
+        "product-strategy"
+      ]
+    },
+    {
+      "slug": "brian-balfour",
+      "sha256": "d974750bfb180d40e69a6d347c87d93ea007e6c26018bccbe9a1de9d0d4353ba",
+      "bytes": 90908,
+      "topics": [
+        "growth-strategy",
+        "product-strategy",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "cam-adams",
+      "sha256": "e10e68b79bda892a54ece9c0dcbf4be6bc15c7fc356619ecb241660422b17e0c",
+      "bytes": 65323,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "product-strategy"
+      ]
+    },
+    {
+      "slug": "casey-winters",
+      "sha256": "a287d60ac08b42cd8c0e85fd389b89f3ca30e785b75979a39f1e5d14d65b8a2c",
+      "bytes": 58461,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "product-market-fit"
+      ]
+    },
+    {
+      "slug": "crystal-w",
+      "sha256": "983112501887f085e801c0aa3d95c49e5767f3b04e15f462f488abc7c08772ba",
+      "bytes": 62832,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "dan-hockenmaier",
+      "sha256": "7ca2d5fce41c29cf373ba00a55865dd377e5d82f42daa4903fdb0a3f3fe900ba",
+      "bytes": 80642,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "product-strategy"
+      ]
+    },
+    {
+      "slug": "eli-schwartz",
+      "sha256": "c2e77e7bd4403cb1951167572591eee9fb358abab69aecf8b271e90974b1d9de",
+      "bytes": 131059,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "product-strategy"
+      ]
+    },
+    {
+      "slug": "emily-kramer",
+      "sha256": "06d0b3f932497ea4de2841836391a38a90eb7260fcd694a92e086da76aac0cac",
+      "bytes": 85115,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "geoff-charles",
+      "sha256": "f8fb3663a8c5c28541e1c73e97203310ffb08674dc00ed16a88de13c5fcd79e3",
+      "bytes": 80681,
+      "topics": [
+        "product-management",
+        "product-strategy",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "grant-lee",
+      "sha256": "fbe3e6db1581a6f05a150c609d34f4e3293cc8c80a68623008f3fb42266a1ffe",
+      "bytes": 136244,
+      "topics": [
+        "experimentation",
+        "product-market-fit",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "hila-qu",
+      "sha256": "b8af78ad10f4cbcf6e05d37c762f5fb081fe960c939cc041ae490af772ad3050",
+      "bytes": 88318,
+      "topics": [
+        "growth-strategy",
+        "product-led-growth",
+        "product-management"
+      ]
+    },
+    {
+      "slug": "jackson-shuttleworth",
+      "sha256": "050fa8517219b08c495661ed8118e73173b9c9f8a6d57e7b5187fa698ae84e02",
+      "bytes": 100728,
+      "topics": [
+        "experimentation",
+        "product-management",
+        "retention"
+      ]
+    },
+    {
+      "slug": "jeanne-grosser",
+      "sha256": "bf222989e8e7aee7e122871f1bcfe5ccb15bbb517f9120ffa4b970448e4396f1",
+      "bytes": 85722,
+      "topics": [
+        "growth-strategy",
+        "product-management",
+        "product-strategy"
+      ]
+    },
+    {
+      "slug": "jiaona-zhang",
+      "sha256": "7cbde437a8db842e100e7c976bf44ffc5bae3818a18e9e23c5acce01b0bec6d8",
+      "bytes": 78933,
+      "topics": [
+        "product-management",
+        "product-strategy",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "lauryn-isford",
+      "sha256": "f3c39fa386ccf126a4e513f03c7979a75991cb2bc6d26bce9105f145b41bbba7",
+      "bytes": 68093,
+      "topics": [
+        "experimentation",
+        "product-led-growth",
+        "retention"
+      ]
+    },
+    {
+      "slug": "merci-grace",
+      "sha256": "6b6ccb4a7304dfc059273466ed94c6e4bcf1521d436dbd651c4ec5bbc112862e",
+      "bytes": 58804,
+      "topics": [
+        "product-led-growth",
+        "product-management",
+        "startup-growth"
+      ]
+    },
+    {
+      "slug": "naomi-gleit",
+      "sha256": "d75838026228c94121fa952dca92c206515a4f8521fe4ddd7c0b18a47c89699a",
+      "bytes": 102824,
+      "topics": [
+        "product-management",
+        "product-market-fit",
+        "retention"
+      ]
+    },
+    {
+      "slug": "nilan-peiris",
+      "sha256": "3237832d91b943a7bdd2dba54c7717c3aabd4c19353e55d0d21fef3ad7e0ffea",
+      "bytes": 82466,
+      "topics": [
+        "growth-strategy",
+        "product-led-growth",
+        "product-management"
+      ]
+    }
+  ]
+}

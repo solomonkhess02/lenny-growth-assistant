@@ -1,0 +1,405 @@
+{
+  "cap": null,
+  "rows": [
+    {
+      "id": "S01",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How does Duolingo use streaks to improve retention?",
+      "expected": "jackson-shuttleworth",
+      "top_similarity": 0.736353,
+      "top_source": "jackson-shuttleworth",
+      "sources": [
+        "jackson-shuttleworth",
+        "jackson-shuttleworth",
+        "jackson-shuttleworth"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S02",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How do you drive word of mouth growth?",
+      "expected": "nilan-peiris",
+      "top_similarity": 0.724884,
+      "top_source": "nilan-peiris",
+      "sources": [
+        "nilan-peiris",
+        "grant-lee",
+        "nilan-peiris"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S03",
+      "label": "supported",
+      "kind": "supported",
+      "question": "What makes a good user onboarding experience?",
+      "expected": "lauryn-isford",
+      "top_similarity": 0.715759,
+      "top_source": "merci-grace",
+      "sources": [
+        "merci-grace",
+        "lauryn-isford",
+        "dan-hockenmaier"
+      ],
+      "hit": true,
+      "top1_hit": false
+    },
+    {
+      "id": "S04",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How do we add a product-led growth motion to a sales-led company?",
+      "expected": "hila-qu",
+      "top_similarity": 0.711255,
+      "top_source": "merci-grace",
+      "sources": [
+        "merci-grace",
+        "hila-qu",
+        "merci-grace"
+      ],
+      "hit": true,
+      "top1_hit": false
+    },
+    {
+      "id": "S05",
+      "label": "supported",
+      "kind": "supported",
+      "question": "Will ChatGPT become a major acquisition channel for products?",
+      "expected": "brian-balfour",
+      "top_similarity": 0.486807,
+      "top_source": "brian-balfour",
+      "sources": [
+        "brian-balfour",
+        "grant-lee",
+        "brian-balfour"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S06",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How is SEO changing now that AI answers questions directly?",
+      "expected": "eli-schwartz",
+      "top_similarity": 0.661258,
+      "top_source": "eli-schwartz",
+      "sources": [
+        "eli-schwartz",
+        "eli-schwartz",
+        "eli-schwartz"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S07",
+      "label": "supported",
+      "kind": "supported",
+      "question": "What drove Calendly's rapid growth?",
+      "expected": "annie-pearl",
+      "top_similarity": 0.480378,
+      "top_source": "annie-pearl",
+      "sources": [
+        "annie-pearl",
+        "naomi-gleit",
+        "annie-pearl"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S08",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How do you build a growth model for a marketplace?",
+      "expected": "dan-hockenmaier",
+      "top_similarity": 0.653251,
+      "top_source": "dan-hockenmaier",
+      "sources": [
+        "dan-hockenmaier",
+        "dan-hockenmaier",
+        "dan-hockenmaier"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S09",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How did Ramp ship so quickly compared to other SaaS companies?",
+      "expected": "geoff-charles",
+      "top_similarity": 0.65506,
+      "top_source": "geoff-charles",
+      "sources": [
+        "geoff-charles",
+        "geoff-charles",
+        "geoff-charles"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S10",
+      "label": "supported",
+      "kind": "supported",
+      "question": "What is a minimum lovable product and how is it different from an MVP?",
+      "expected": "jiaona-zhang",
+      "top_similarity": 0.742637,
+      "top_source": "jiaona-zhang",
+      "sources": [
+        "jiaona-zhang",
+        "jiaona-zhang",
+        "jiaona-zhang"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S11",
+      "label": "supported",
+      "kind": "supported",
+      "question": "Why do product managers from big companies struggle at early-stage startups?",
+      "expected": "casey-winters",
+      "top_similarity": 0.623551,
+      "top_source": "emily-kramer",
+      "sources": [
+        "emily-kramer",
+        "emily-kramer",
+        "merci-grace"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "S12",
+      "label": "supported",
+      "kind": "supported",
+      "question": "Why does Canva use coaches instead of managers?",
+      "expected": "cam-adams",
+      "top_similarity": 0.601551,
+      "top_source": "cam-adams",
+      "sources": [
+        "cam-adams",
+        "cam-adams",
+        "cam-adams"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S13",
+      "label": "supported",
+      "kind": "supported",
+      "question": "What early growth tactics did Facebook use to scale users?",
+      "expected": "naomi-gleit",
+      "top_similarity": 0.628617,
+      "top_source": "naomi-gleit",
+      "sources": [
+        "naomi-gleit",
+        "brian-balfour",
+        "naomi-gleit"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S14",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How does HubSpot approach growth?",
+      "expected": "christopher-miller",
+      "top_similarity": 0.707462,
+      "top_source": "christopher-miller",
+      "sources": [
+        "christopher-miller",
+        "christopher-miller",
+        "christopher-miller"
+      ],
+      "hit": true,
+      "top1_hit": true
+    },
+    {
+      "id": "S15",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How do you build a marketing team and function from scratch?",
+      "expected": "emily-kramer",
+      "top_similarity": 0.573077,
+      "top_source": "jeanne-grosser",
+      "sources": [
+        "jeanne-grosser",
+        "emily-kramer",
+        "emily-kramer"
+      ],
+      "hit": true,
+      "top1_hit": false
+    },
+    {
+      "id": "S16",
+      "label": "supported",
+      "kind": "supported",
+      "question": "How should a leader handle layoffs humanely?",
+      "expected": "merci-grace",
+      "top_similarity": 0.412306,
+      "top_source": "geoff-charles",
+      "sources": [
+        "geoff-charles",
+        "casey-winters",
+        "jiaona-zhang"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U01",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "question": "How should we structure the liquidation preference in a Series B term sheet?",
+      "expected": null,
+      "top_similarity": 0.381095,
+      "top_source": "gibson-biddle",
+      "sources": [
+        "gibson-biddle",
+        "lauryn-isford",
+        "lauryn-isford"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U02",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "question": "What is the process for appealing an Apple App Store rejection?",
+      "expected": null,
+      "top_similarity": 0.332432,
+      "top_source": "brian-balfour",
+      "sources": [
+        "brian-balfour",
+        "brian-balfour",
+        "grant-lee"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U03",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "question": "How do we set up GDPR-compliant data processing agreements with EU subprocessors?",
+      "expected": null,
+      "top_similarity": 0.366326,
+      "top_source": "nilan-peiris",
+      "sources": [
+        "nilan-peiris",
+        "nilan-peiris",
+        "cam-adams"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U04",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "question": "How do I configure Kubernetes horizontal pod autoscaling to reduce cloud costs?",
+      "expected": null,
+      "top_similarity": 0.268885,
+      "top_source": "geoff-charles",
+      "sources": [
+        "geoff-charles",
+        "grant-lee",
+        "eli-schwartz"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U05",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "question": "What patent filing strategy should a software startup follow?",
+      "expected": null,
+      "top_similarity": 0.379917,
+      "top_source": "casey-winters",
+      "sources": [
+        "casey-winters",
+        "hila-qu",
+        "hila-qu"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U06",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "question": "What is the best way to prune tomato plants for a bigger harvest?",
+      "expected": null,
+      "top_similarity": 0.252015,
+      "top_source": "jackson-shuttleworth",
+      "sources": [
+        "jackson-shuttleworth",
+        "hila-qu",
+        "christopher-miller"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U07",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "question": "How do I fix a leaking kitchen tap?",
+      "expected": null,
+      "top_similarity": 0.232539,
+      "top_source": "grant-lee",
+      "sources": [
+        "grant-lee",
+        "hila-qu",
+        "dan-hockenmaier"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U08",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "question": "What were the main causes of the French Revolution?",
+      "expected": null,
+      "top_similarity": 0.238221,
+      "top_source": "hila-qu",
+      "sources": [
+        "hila-qu",
+        "christopher-miller",
+        "geoff-charles"
+      ],
+      "hit": false,
+      "top1_hit": false
+    },
+    {
+      "id": "U09",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "question": "How do I make a sourdough starter from scratch?",
+      "expected": null,
+      "top_similarity": 0.301319,
+      "top_source": "gibson-biddle",
+      "sources": [
+        "gibson-biddle",
+        "grant-lee",
+        "merci-grace"
+      ],
+      "hit": false,
+      "top1_hit": false
+    }
+  ]
+}

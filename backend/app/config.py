@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     embedding_model: str = "all-minilm"
     embedding_dim: int = 384
 
+    # --- retrieval (Phase 3) -------------------------------------------------
+    # Number of chunks fed to the model. ~3 is a UX decision, not a guess:
+    # Phase 1 measured 30 of a 48s local answer as prompt processing at
+    # ~118 tok/s prefill, so evidence size directly sets perceived latency.
+    retrieval_k: int = 3
+
+    # Cosine-similarity floor. Below it, retrieval returns NOTHING rather than
+    # its least-bad guess. Set by pre-registered calibration -- see
+    # docs/retrieval-calibration.md for the frozen question set, the two score
+    # distributions and the confusion matrix at this value.
+    retrieval_min_similarity: float = 0.40
+
+    # Max chunks from any single episode, so k=3 cannot collapse onto one
+    # source. None disables the cap.
+    retrieval_max_per_source: int | None = 2
+
     # --- database -----------------------------------------------------------
     database_url: str = "postgresql://lenny:CHANGE_ME@127.0.0.1:5432/lenny"
 
@@ -85,6 +101,9 @@ class Settings(BaseSettings):
             "deepseek_api_key_present": bool(self.deepseek_api_key),
             "embedding_model": self.embedding_model,
             "embedding_dim": self.embedding_dim,
+            "retrieval_k": self.retrieval_k,
+            "retrieval_min_similarity": self.retrieval_min_similarity,
+            "retrieval_max_per_source": self.retrieval_max_per_source,
             "log_level": self.log_level,
         }
 
