@@ -1,0 +1,14 @@
+# Phase 2B skeleton. Deliberately small — skill 01 prefers few dependencies.
+# No AI/RAG packages here; those arrive in Phases 3-4.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+sqlalchemy[asyncio]>=2.0,<3.0
+asyncpg>=0.30,<1.0
+alembic>=1.14,<2.0
+pydantic>=2.9,<3.0
+pydantic-settings>=2.6,<3.0
+httpx>=0.27,<1.0
+
+# Structured JSON logging is hand-rolled in app/logging_conf.py rather than
+# pulling a formatter dependency — it is ~40 lines and we control the schema.

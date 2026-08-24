@@ -1,0 +1,87 @@
+# One command: docker compose up
+#
+# Topology (locked Phase 2A):
+#   db     - PostgreSQL + pgvector, in a container, NAMED VOLUME
+#   api    - FastAPI + the built frontend, one container
+#   Ollama - HOST-NATIVE, not containerised (GPU passthrough on Windows/WSL2
+#            is fragile; host-native is already proven working)
+
+services:
+  db:
+    # pgvector image, not stock postgres: OD-1 locked PostgreSQL + pgvector.
+    # Phase 2B creates no vector columns yet, but pinning the image now avoids
+    # a swap in Phase 3.
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lenny}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lenny_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-lenny}
+    volumes:
+      # NAMED VOLUME, never a Windows bind mount: bind-mounting PGDATA on
+      # Windows causes permission and fsync problems.
+      #
+      # Mount at /var/lib/postgresql, NOT /var/lib/postgresql/data. Postgres 18+
+      # images store data in a major-version subdirectory and hard-error on the
+      # old path ("there appears to be PostgreSQL data in ... (unused
+      # mount/volume)"). Verified by hitting it on 2026-08-25.
+      - lenny_pgdata:/var/lib/postgresql
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lenny} -d ${POSTGRES_DB:-lenny}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the network Postgres is reached by service name, never localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny_dev_password}@db:5432/${POSTGRES_DB:-lenny}
+
+      # Host-native Ollama -- deliberately NOT containerised. GPU passthrough
+      # on Windows/WSL2 is fragile, and host-native is already proven working.
+      #
+      # Measured 2026-08-25 on Docker Desktop: host.docker.internal resolves
+      # IPv4-first (192.168.65.254), connects in ~3.5ms, and reaches Ollama
+      # even though Ollama is bound to 127.0.0.1 with OLLAMA_HOST unset --
+      # Desktop's proxy presents as a loopback connection to the host.
+      # On LINUX with host-gateway there is no such proxy: set OLLAMA_HOST=0.0.0.0.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_CONTAINER:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b-instruct}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
+
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/anthropic}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-minilm}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    extra_hosts:
+      # Docker Desktop provides this automatically; declaring it keeps the
+      # file portable to Linux hosts.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/live',timeout=3).status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  lenny_pgdata:
+    name: lenny_pgdata
