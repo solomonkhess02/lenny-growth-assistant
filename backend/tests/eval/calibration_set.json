@@ -1,0 +1,200 @@
+{
+  "_purpose": "Pre-registered labelled question set for calibrating the retrieval similarity floor. Written and COMMITTED before any retrieval score was observed. The git history of this file is the pre-registration: if it were authored after seeing the score distributions, the chosen threshold would be a curve fit rather than a measurement, and every downstream eval case would be self-confirming.",
+  "_rules": [
+    "Questions are NOT added, removed or reworded after scores are observed.",
+    "A genuinely wrong entry is corrected only via an explicit `revisions` entry recording what changed, why, and that it happened post-hoc; the calibration is then re-run from scratch and re-reported.",
+    "`supported` means the answer demonstrably exists in the 20-episode curated corpus; `expected_source_id` names the episode slug that should supply it.",
+    "`unsupported` splits into `near_miss` (plausibly on-topic growth/product questions the corpus does not cover) and `off_domain` (unrelated subjects). Near-miss is the honest test; off-domain alone would make any threshold look good."
+  ],
+  "corpus_commit": "be8ab89a890a833cbba2c892178f823fff178c65",
+  "embedding_model": "all-minilm",
+  "embedding_dim": 384,
+  "frozen_at": "2026-08-25",
+  "revisions": [],
+  "questions": [
+    {
+      "id": "S01",
+      "question": "How does Duolingo use streaks to improve retention?",
+      "label": "supported",
+      "expected_source_id": "jackson-shuttleworth",
+      "rationale": "Episode is specifically about the Duolingo streak feature and the retention team."
+    },
+    {
+      "id": "S02",
+      "question": "How do you drive word of mouth growth?",
+      "label": "supported",
+      "expected_source_id": "nilan-peiris",
+      "rationale": "Episode title is literally 'How to drive word of mouth' (Wise CPO)."
+    },
+    {
+      "id": "S03",
+      "question": "What makes a good user onboarding experience?",
+      "label": "supported",
+      "expected_source_id": "lauryn-isford",
+      "rationale": "Episode is 'Mastering onboarding' from Airtable's Head of Growth."
+    },
+    {
+      "id": "S04",
+      "question": "How do we add a product-led growth motion to a sales-led company?",
+      "label": "supported",
+      "expected_source_id": "hila-qu",
+      "rationale": "Episode is 'The ultimate guide to adding a PLG motion'."
+    },
+    {
+      "id": "S05",
+      "question": "Will ChatGPT become a major acquisition channel for products?",
+      "label": "supported",
+      "expected_source_id": "brian-balfour",
+      "rationale": "Episode argues ChatGPT is the next big growth channel."
+    },
+    {
+      "id": "S06",
+      "question": "How is SEO changing now that AI answers questions directly?",
+      "label": "supported",
+      "expected_source_id": "eli-schwartz",
+      "rationale": "Episode is 'Rethinking SEO in the age of AI'."
+    },
+    {
+      "id": "S07",
+      "question": "What drove Calendly's rapid growth?",
+      "label": "supported",
+      "expected_source_id": "annie-pearl",
+      "rationale": "Episode is behind the scenes of Calendly's growth with its CPO."
+    },
+    {
+      "id": "S08",
+      "question": "How do you build a growth model for a marketplace?",
+      "label": "supported",
+      "expected_source_id": "dan-hockenmaier",
+      "rationale": "Episode covers growth models and marketplace growth strategy."
+    },
+    {
+      "id": "S09",
+      "question": "How did Ramp ship so quickly compared to other SaaS companies?",
+      "label": "supported",
+      "expected_source_id": "geoff-charles",
+      "rationale": "Episode is 'Velocity over everything: how Ramp became the fastest-growing SaaS startup'."
+    },
+    {
+      "id": "S10",
+      "question": "What is a minimum lovable product and how is it different from an MVP?",
+      "label": "supported",
+      "expected_source_id": "jiaona-zhang",
+      "rationale": "Episode covers building minimum lovable products."
+    },
+    {
+      "id": "S11",
+      "question": "Why do product managers from big companies struggle at early-stage startups?",
+      "label": "supported",
+      "expected_source_id": "casey-winters",
+      "rationale": "Episode is 'Why most product managers are unprepared for the demands of a real startup'."
+    },
+    {
+      "id": "S12",
+      "question": "Why does Canva use coaches instead of managers?",
+      "label": "supported",
+      "expected_source_id": "cam-adams",
+      "rationale": "Episode covers Canva's 'coaches not managers' model."
+    },
+    {
+      "id": "S13",
+      "question": "What early growth tactics did Facebook use to scale users?",
+      "label": "supported",
+      "expected_source_id": "naomi-gleit",
+      "rationale": "Meta's head of product discusses early growth tactics."
+    },
+    {
+      "id": "S14",
+      "question": "How does HubSpot approach growth?",
+      "label": "supported",
+      "expected_source_id": "christopher-miller",
+      "rationale": "Episode covers HubSpot's growth formula."
+    },
+    {
+      "id": "S15",
+      "question": "How do you build a marketing team and function from scratch?",
+      "label": "supported",
+      "expected_source_id": "emily-kramer",
+      "rationale": "Episode is 'How to build a powerful marketing machine'."
+    },
+    {
+      "id": "S16",
+      "question": "How should a leader handle layoffs humanely?",
+      "label": "supported",
+      "expected_source_id": "merci-grace",
+      "rationale": "Episode covers doing layoffs with grace and giving hard feedback."
+    },
+    {
+      "id": "U01",
+      "question": "How should we structure the liquidation preference in a Series B term sheet?",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "expected_source_id": null,
+      "rationale": "Plausible startup topic, but these 20 episodes are growth/product operators, not VC deal mechanics."
+    },
+    {
+      "id": "U02",
+      "question": "What is the process for appealing an Apple App Store rejection?",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "expected_source_id": null,
+      "rationale": "Concrete platform-operations question not covered by any curated episode."
+    },
+    {
+      "id": "U03",
+      "question": "How do we set up GDPR-compliant data processing agreements with EU subprocessors?",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "expected_source_id": null,
+      "rationale": "Legal/compliance operations; outside the growth and product scope of the corpus."
+    },
+    {
+      "id": "U04",
+      "question": "How do I configure Kubernetes horizontal pod autoscaling to reduce cloud costs?",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "expected_source_id": null,
+      "rationale": "Infrastructure engineering; the corpus is product/growth leadership."
+    },
+    {
+      "id": "U05",
+      "question": "What patent filing strategy should a software startup follow?",
+      "label": "unsupported",
+      "kind": "near_miss",
+      "expected_source_id": null,
+      "rationale": "Intellectual-property strategy is not discussed in the curated episodes."
+    },
+    {
+      "id": "U06",
+      "question": "What is the best way to prune tomato plants for a bigger harvest?",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "expected_source_id": null,
+      "rationale": "Gardening; entirely unrelated to the corpus."
+    },
+    {
+      "id": "U07",
+      "question": "How do I fix a leaking kitchen tap?",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "expected_source_id": null,
+      "rationale": "Home repair; entirely unrelated to the corpus."
+    },
+    {
+      "id": "U08",
+      "question": "What were the main causes of the French Revolution?",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "expected_source_id": null,
+      "rationale": "History; entirely unrelated to the corpus."
+    },
+    {
+      "id": "U09",
+      "question": "How do I make a sourdough starter from scratch?",
+      "label": "unsupported",
+      "kind": "off_domain",
+      "expected_source_id": null,
+      "rationale": "Cooking; entirely unrelated to the corpus."
+    }
+  ]
+}
