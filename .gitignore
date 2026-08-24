@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Secrets — MUST stay first. .env holds live credentials and is never committed.
+# The committed template is .env.example (placeholders only).
+# ---------------------------------------------------------------------------
+.env
+.env.*
+*.env
+!.env.example
+
+# Any stray credential material
+*.pem
+*.key
+*credentials*
+*secret*
+
+# ---------------------------------------------------------------------------
+# Third-party transcript data — licensed for personal/educational use.
+# Referenced and ingested at runtime, never redistributed in this repo.
+# ---------------------------------------------------------------------------
+data/transcripts/
+spike/evidence/
+spike/results/
+
+# ---------------------------------------------------------------------------
+# Assignment source material — Oogway Labs' own hiring document.
+# This repo is public; the spec is not ours to redistribute. Kept locally,
+# summarised in README.md instead.
+# ---------------------------------------------------------------------------
+Forward_Deployed_Engineer_Take_Home_Assignment.docx
+*.docx
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# ---------------------------------------------------------------------------
+# Large local assets — these live on D:, never in git
+# ---------------------------------------------------------------------------
+*.gguf
+*.bin
+*.safetensors
+OllamaModels/
+OllamaSetup/
+
+# ---------------------------------------------------------------------------
+# Runtime / operational
+# ---------------------------------------------------------------------------
+*.log
+logs/
+postgres-data/
+pgdata/
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------------------------------------------------------------------------
+# OS / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+*.swo
+*~
