@@ -4,14 +4,14 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
 )
 from sqlalchemy import text
 
 from .config import get_settings
-from .errors import DatabaseUnavailable
+from .errors import DatabaseUnavailable, ResourceConflict
 
 log = logging.getLogger("app.db")
 
@@ -47,6 +47,13 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         try:
             yield session
             await session.commit()
+        except IntegrityError as exc:
+            # MUST precede the SQLAlchemyError branch: IntegrityError is a
+            # subclass, and letting it fall through reported a healthy
+            # database as unreachable.
+            await session.rollback()
+            log.warning("integrity_conflict", extra={"exc_class": type(exc).__name__})
+            raise ResourceConflict() from exc
         except (SQLAlchemyError, OSError) as exc:
             # OSError matters: when the db container is stopped, Docker drops
             # its DNS entry and the failure surfaces as socket.gaierror during

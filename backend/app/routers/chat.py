@@ -1,18 +1,24 @@
 """Streaming plumbing (SSE).
 
-Requirement 1 of the locked Provider UX contract makes streaming baseline UX
-for every model request, so the transport is built into the skeleton rather
-than retrofitted in Phase 5.
+Requirement 1 of the locked Provider UX contract makes streaming baseline
+UX for every model request, so the transport is built into the skeleton
+rather than retrofitted in Phase 5.
 
 Phase 2B streams a deterministic placeholder: no model is involved, so the
 skeleton runs and its tests pass without Ollama. Phase 4 replaces
-`_placeholder_stream` with the agent; the event protocol below does not change.
+`_placeholder_stream` with the agent; the event protocol below does not
+change.
+
+Persistence goes through app.repository. This module previously imported
+data access from routers/sessions.py -- routers reaching into routers --
+which is how sequence allocation drifted away from the write that depends
+on it.
 
 Event protocol (SSE `event:` / `data:` JSON):
-  meta   - session_id, seq, provider, model            (always first)
+  meta   - session_id, user_seq, provider, model        (always first)
   delta  - {"text": "..."} incremental content
   done   - {"message_id", "seq", "latency_ms", "content_length"}
-  error  - {"code", "message", "retryable"}            (terminal)
+  error  - {"code", "message", "retryable"}             (terminal)
 """
 from __future__ import annotations
 
@@ -27,13 +33,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import repository as repo
 from ..db import get_session, session_factory
 from ..errors import AppError
-from ..models import Message
-from ..providers import ModelProvider, get_provider
-from ..schemas import MessageCreate, MessageOut
 from ..logging_conf import request_id_var
-from .sessions import load_session, next_seq
+from ..providers import ModelProvider, get_provider
+from ..schemas import MessageCreate
 
 log = logging.getLogger("app.chat")
 router = APIRouter(prefix="/sessions", tags=["chat"])
@@ -64,23 +69,17 @@ async def post_message(
     request: Request,
     db: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    # Validate and persist the user turn *before* streaming: if the client
-    # disconnects mid-stream, their message is not lost.
-    session = await load_session(db, session_id)
     provider: ModelProvider = get_provider()
 
-    seq = await next_seq(db, session_id)
-    db.add(Message(session_id=session_id, seq=seq, role="user",
-                   content=body.content))
-    # COMMIT, not flush. The streaming generator below runs after this handler
-    # returns and opens its own session to allocate the assistant's seq. An
-    # uncommitted user row is invisible to that session, so it would reuse the
-    # same seq and then block on UNIQUE(session_id, seq) waiting for a
-    # transaction that only commits once the stream ends -- a self-deadlock.
-    # Committing here also honours the stated intent: the user's turn survives
-    # a mid-stream disconnect.
+    # Persist the user turn and COMMIT before streaming. The generator below
+    # runs after this handler returns and opens its own session; an
+    # uncommitted row would be invisible to it. Committing here also means a
+    # mid-stream disconnect cannot lose the user's message.
+    user_msg = await repo.append_message(
+        db, session_id, role="user", content=body.content)
+    user_seq = user_msg.seq
     await db.commit()
-    user_seq = seq
+
     rid = request_id_var.get()
 
     async def generator() -> AsyncIterator[str]:
@@ -94,8 +93,8 @@ async def post_message(
         try:
             async for delta in _placeholder_stream(body.content):
                 if await request.is_disconnected():
-                    log.info("client_disconnected", extra={
-                        "session_id": str(session_id)})
+                    log.info("client_disconnected",
+                             extra={"session_id": str(session_id)})
                     break
                 parts.append(delta)
                 yield sse("delta", {"text": delta})
@@ -103,18 +102,13 @@ async def post_message(
             content = "".join(parts).strip()
             latency = int((time.perf_counter() - t0) * 1000)
 
-            # Own session: the request-scoped one may already be closed by the
-            # time a streaming body finishes.
             async with session_factory()() as write:
-                a_seq = await next_seq(write, session_id)
-                msg = Message(
-                    session_id=session_id, seq=a_seq, role="assistant",
-                    content=content, provider=provider.name,
-                    model=provider.model, latency_ms=latency,
+                msg = await repo.append_message(
+                    write, session_id, role="assistant", content=content,
+                    provider=provider.name, model=provider.model,
+                    latency_ms=latency,
                 )
-                write.add(msg)
                 await write.commit()
-                await write.refresh(msg)
                 msg_id, a_seq = str(msg.id), msg.seq
 
             log.info("assistant_message_persisted", extra={
@@ -127,14 +121,14 @@ async def post_message(
                                "content_length": len(content)})
 
         except AppError as exc:
-            # Status is already 200 — a mid-stream failure must be surfaced as
-            # a terminal event, never swallowed into a truncated success.
+            # Status is already 200 — a mid-stream failure must be surfaced
+            # as a terminal event, never swallowed into a truncated success.
             log.warning("stream_failed", extra={
                 "session_id": str(session_id), "error_code": exc.code,
                 "outcome": "error"})
             yield sse("error", {"code": exc.code, "message": exc.message,
                                 "retryable": exc.retryable})
-        except Exception as exc:  # noqa: BLE001
+        except Exception:
             log.exception("stream_unhandled", extra={
                 "session_id": str(session_id), "outcome": "error"})
             yield sse("error", {"code": "internal_error",
@@ -150,16 +144,3 @@ async def post_message(
             "X-Accel-Buffering": "no",  # defeat proxy buffering
         },
     )
-
-
-@router.get("/{session_id}/messages", response_model=list[MessageOut])
-async def list_messages(
-    session_id: uuid.UUID, db: AsyncSession = Depends(get_session)
-) -> list[Message]:
-    from sqlalchemy import select
-    await load_session(db, session_id)
-    rows = await db.scalars(
-        select(Message).where(Message.session_id == session_id)
-        .order_by(Message.seq)
-    )
-    return list(rows)

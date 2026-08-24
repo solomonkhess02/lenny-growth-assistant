@@ -51,6 +51,21 @@ class ValidationFailed(AppError):
     message = "The request body failed validation."
 
 
+class ResourceConflict(AppError):
+    """A database constraint rejected the write.
+
+    Distinct from DatabaseUnavailable on purpose. An IntegrityError is a
+    SQLAlchemyError, so it previously fell into the DatabaseUnavailable
+    branch and a perfectly healthy database was reported as unreachable --
+    sending an operator to look for an outage that did not exist.
+    """
+
+    code = "conflict"
+    http_status = status.HTTP_409_CONFLICT
+    message = "The write conflicted with existing data."
+    retryable = True
+
+
 class DatabaseUnavailable(AppError):
     code = "database_unavailable"
     http_status = status.HTTP_503_SERVICE_UNAVAILABLE
