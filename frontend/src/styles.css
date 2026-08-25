@@ -61,7 +61,16 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .error  { background: color-mix(in srgb, var(--bad) 14%, transparent);  color: var(--bad); }
 .notice { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
 
-.split { display: grid; grid-template-columns: 1fr 380px; flex: 1; min-height: 0; }
+.split {
+  display: grid; grid-template-columns: 1fr 380px;
+  flex: 1; min-height: 0;
+  /* The row is capped at the container. A grid row defaults to auto,
+     i.e. tall enough for its tallest item -- which let the artifact pane
+     push the whole page taller than the viewport and carry the composer
+     below the fold with it. Measured before the fix: .split 750px,
+     .artifact 943px, composer bottom 993px against an 800px viewport. */
+  grid-template-rows: minmax(0, 1fr);
+}
 @media (max-width: 900px) { .split { grid-template-columns: 1fr; } .artifact { display: none; } }
 
 .chat { display: flex; flex-direction: column; min-height: 0; }
@@ -89,19 +98,26 @@ textarea {
   font: inherit;
 }
 
-.artifact { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+.artifact {
+  border-left: 1px solid var(--line); background: var(--panel);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
 .artifact-head {
   padding: 10px 14px; border-bottom: 1px solid var(--line);
   font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
 }
-.artifact-body { padding: 14px; color: var(--dim); font-size: 13px; }
+.artifact-body {
+  padding: 14px; color: var(--dim); font-size: 13px;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 
 /* ==========================================================================
    Phase 5. Extends the Phase 2B tokens above rather than replacing them.
    ========================================================================== */
 
-.split { grid-template-columns: 220px 1fr 380px; }
+.split { grid-template-columns: 220px 1fr clamp(320px, 28%, 440px); }
 .split:has(.artifact.collapsed) { grid-template-columns: 220px 1fr auto; }
 @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } .sidebar, .artifact { display: none; } }
 
@@ -250,8 +266,9 @@ button.ghost.danger:hover { color: var(--bad); border-color: var(--bad); }
   border-radius: 6px;
   background: var(--panel, #141414);
   border: 1px solid var(--line, #2a2a2a);
-  max-height: 55vh;
-  overflow-y: auto;
+  /* No inner cap: .artifact-body is the pane's single scroll region, and
+     a capped box inside it would nest one scrollbar in another. */
+  max-height: none;
 }
 
 /* A retracted essay is struck through under its banner, exactly as a
