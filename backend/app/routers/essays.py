@@ -13,7 +13,7 @@ second one:
   delta     - {"text": "..."} incremental Markdown
   grounding - verification verdict for the finished essay
   done      - {"essay_id", "word_count", "within_target", "trustworthy", ...}
-  error     - {"code", "message", "retryable"}                  (terminal)
+  error     - {"code", "message", "retryable", "request_id"}     (terminal)
 
 The entry conditions below are enforced HERE and not only in the UI. A hidden
 button is not an access control, and the rule that matters most -- no essay is
@@ -21,11 +21,13 @@ written from an answer that failed verification -- has to hold for any caller.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -33,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import artifacts
 from .. import repository as repo
-from ..db import get_session, session_factory
+from ..db import db_errors, get_session, session_factory
 from ..errors import AppError, NotFoundError, ResourceConflict, ValidationFailed
 from ..logging_conf import request_id_var
 from ..models import Essay, Message
@@ -152,14 +154,25 @@ async def create_essay(
             grounding: dict = {}
             sources: list[dict] = []
 
-            async with session_factory()() as read:
-                async for event, payload in stream_essay(
-                        read, question=question, answer=answer_text,
-                        stored_sources=stored_sources, provider=provider):
+            async with (
+                session_factory()() as read,
+                db_errors(),
+                # Deterministic teardown: see the identical comment in
+                # routers/chat.py. Without it, closing depended on the event
+                # loop's async-generator finalizer, and an abandoned essay
+                # kept its Pi subprocess (and cloud token spend) running
+                # unobserved until GC happened to collect it.
+                aclosing(stream_essay(
+                    read, question=question, answer=answer_text,
+                    stored_sources=stored_sources, provider=provider),
+                ) as essay_stream,
+            ):
+                async for event, payload in essay_stream:
                     if await request.is_disconnected():
                         # A partial essay is not an essay: nothing is persisted.
                         log.info("client_disconnected", extra={
-                            "session_id": str(session_id), "kind": "essay"})
+                            "session_id": str(session_id), "kind": "essay",
+                            "outcome": "abandoned"})
                         return
                     if event == "complete":
                         final = payload
@@ -173,7 +186,7 @@ async def create_essay(
             markdown = final.get("markdown", "").strip()
             latency = int((time.perf_counter() - t0) * 1000)
 
-            async with session_factory()() as write:
+            async with session_factory()() as write, db_errors():
                 essay = await repo.create_essay(
                     write, session_id,
                     source_message_id=answer_id,
@@ -221,13 +234,20 @@ async def create_essay(
                 "session_id": str(session_id), "error_code": exc.code,
                 "outcome": "error"})
             yield sse("error", {"code": exc.code, "message": exc.message,
-                                "retryable": exc.retryable})
+                                "retryable": exc.retryable, "request_id": rid})
+        except asyncio.CancelledError:
+            # See the identical handler in routers/chat.py: the transport is
+            # already gone by the time this fires, so nothing can be sent --
+            # this only logs (never silently) and re-raises.
+            log.info("essay_stream_cancelled", extra={
+                "session_id": str(session_id), "outcome": "cancelled"})
+            raise
         except Exception:
             log.exception("essay_stream_unhandled", extra={
                 "session_id": str(session_id), "outcome": "error"})
             yield sse("error", {"code": "internal_error",
                                 "message": "An unexpected error occurred.",
-                                "retryable": False})
+                                "retryable": False, "request_id": rid})
 
     return StreamingResponse(
         generator(),

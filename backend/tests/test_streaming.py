@@ -159,6 +159,108 @@ async def test_a_failing_provider_is_surfaced_never_substituted(client, monkeypa
         "the failing provider appears to have been substituted")
 
 
+async def test_a_generation_timeout_ends_the_stream_in_a_retryable_error(
+        client, session_id, monkeypatch):
+    """Phase 8. `GenerationTimeout` (raised by pi_runtime past its idle/total
+    bound -- proven directly in test_pi_runtime.py) must reach the client as
+    a proper terminal error frame, exactly like any other provider failure:
+    no `done`, no fabricated `grounding`, and marked retryable.
+    """
+    from app import agent as agent_mod
+    from app import providers as providers_mod
+    from app.errors import GenerationTimeout
+    from app.retrieval import Evidence
+
+    async def _fake_retrieve(db, session_id, question, k):
+        return [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0",
+        )]
+
+    class HangingRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                yield "Some partial text, then nothing more ever arrives. "
+                raise GenerationTimeout(
+                    "Provider 'ollama' produced no output for 120s.")
+            return gen()
+
+    monkeypatch.setattr(agent_mod, "retrieve_for_session", _fake_retrieve)
+    monkeypatch.setattr(providers_mod, "PiRuntime", HangingRuntime)
+
+    events = await _stream(client, session_id, "How do I improve retention?")
+    kinds = [e for e, _ in events]
+
+    assert kinds[-1] == "error", f"stream did not end in an error: {kinds}"
+    err = events[-1][1]
+    assert err["code"] == "generation_timeout"
+    assert err["retryable"] is True
+    assert "grounding" not in kinds, (
+        "a timeout must not carry a verdict -- the text was never verified")
+    assert "done" not in kinds
+
+
+async def test_a_provider_failure_after_partial_output_emits_no_grounding(
+        client, session_id, monkeypatch):
+    """D3 (Phase 8). Partial text must never carry an invented verdict.
+
+    If the provider dies mid-generation, `verify_answer` must never run --
+    otherwise there would be no way to tell "never checked" from "checked and
+    passed", and the client would have no signal to stop the partial text
+    from rendering exactly like a normal, trustworthy answer.
+    """
+    from app import agent as agent_mod
+    from app import providers as providers_mod
+    from app.errors import ProviderUnavailable
+    from app.retrieval import Evidence
+
+    async def _fake_retrieve(db, session_id, question, k):
+        return [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0",
+        )]
+
+    class DyingMidStreamRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                yield "Partial answer text before the provider dies. "
+                raise ProviderUnavailable("Connection reset mid-generation.")
+            return gen()
+
+    monkeypatch.setattr(agent_mod, "retrieve_for_session", _fake_retrieve)
+    monkeypatch.setattr(providers_mod, "PiRuntime", DyingMidStreamRuntime)
+
+    events = await _stream(client, session_id, "How do I improve retention?")
+    kinds = [e for e, _ in events]
+
+    assert "delta" in kinds, "test premise: some text must have streamed"
+    assert kinds[-1] == "error"
+    assert "grounding" not in kinds, (
+        "verify_answer must never run on an incomplete answer -- a verdict "
+        "here would let partial text be mistaken for a checked one")
+    assert "done" not in kinds
+
+    err = events[-1][1]
+    assert err["code"] == "provider_unavailable"
+    assert err["retryable"] is True
+    # Correlatable with the meta frame's request id, and with server logs.
+    meta = events[0][1]
+    assert err["request_id"], "error frame must carry a request_id"
+    assert err["request_id"] == meta["request_id"]
+
+
 # --------------------------------------------------------------------------
 # Abstention -- an empty index must refuse, not improvise
 # --------------------------------------------------------------------------
@@ -261,3 +363,110 @@ async def test_grounded_answer_streams_incrementally(client, session_id,
     assert len(deltas) > 5, f"not incremental: {len(deltas)} frames"
     assert "grounding" in kinds
     assert grounding["invalid_tags"] == [], "model cited evidence that does not exist"
+
+
+# --------------------------------------------------------------------------
+# D1 (Phase 8) -- cancellation must be logged and must keep propagating
+# --------------------------------------------------------------------------
+async def test_cancellation_mid_stream_is_logged_and_reraised(
+        session_id, monkeypatch, caplog):
+    """If cancellation reaches the generator (Starlette's own disconnect
+    handling winning the race against the `is_disconnected()` poll), it
+    must be LOGGED, not silently discarded, and must keep propagating --
+    swallowing it would leave the underlying task never actually cancelled.
+
+    Drives the router's real generator directly via `response.body_iterator`
+    rather than through the HTTP client: under `ASGITransport`,
+    `is_disconnected()` never resolves true during an active stream (its
+    `receive()` blocks on the response completing first), so a real
+    cancellation cannot be provoked end-to-end through `client.stream(...)`
+    -- confirmed while auditing this failure mode for Phase 8.
+    """
+    import asyncio
+    import uuid as uuid_mod
+
+    from app import agent as agent_mod
+    from app.db import session_factory
+    from app.routers.chat import post_message
+    from app.schemas import MessageCreate
+
+    async def _fake_retrieve(db, session_id, question, k):
+        return []  # abstention: the shortest path to a real in-try yield
+
+    monkeypatch.setattr(agent_mod, "retrieve_for_session", _fake_retrieve)
+
+    class _NeverDisconnected:
+        async def is_disconnected(self):
+            return False
+
+    async with session_factory()() as db:
+        response = await post_message(
+            uuid_mod.UUID(session_id), MessageCreate(content="hi"),
+            _NeverDisconnected(), db=db)
+
+    body = response.body_iterator
+    with caplog.at_level("INFO", logger="app.chat"):
+        await body.asend(None)  # "meta" -- yielded BEFORE the try block opens
+        await body.asend(None)  # "sources" -- now suspended INSIDE the try
+        with pytest.raises(asyncio.CancelledError):
+            await body.athrow(asyncio.CancelledError())
+
+    assert any(
+        r.message == "stream_cancelled" and getattr(r, "outcome", None) == "cancelled"
+        for r in caplog.records
+    ), "cancellation must be logged, not silently discarded"
+
+
+async def test_stream_answer_closes_the_provider_stream_on_early_close(monkeypatch):
+    """D1 (Phase 8), the agent-layer half of the fix.
+
+    Closing `stream_answer` early -- as the router's `aclosing(...)` does on
+    a disconnect or cancellation -- must propagate the close down to
+    whatever `provider.stream()` returned. Before this, `stream_answer` had
+    no `try/finally` at all, so closing it depended on the event loop's
+    async-generator finalizer eventually collecting the frame: neither
+    synchronous with the disconnect nor guaranteed to run at all, and until
+    it did the provider (in production, Pi's subprocess) kept generating,
+    unobserved, as an orphan. `stub-based, no corpus/Ollama needed -- kept
+    here rather than in test_agent.py, which gates the whole module on both.
+    """
+    from app import agent as agent_mod
+    from app.retrieval import Evidence
+
+    closed = {"value": False}
+
+    class TrackingProvider:
+        name = "ollama"
+        model = "m"
+
+        def stream(self, prompt, **kwargs):
+            async def gen():
+                try:
+                    yield "hello "
+                    yield "world"
+                finally:
+                    closed["value"] = True
+            return gen()
+
+    async def _fake_retrieve(db, question, k):
+        return [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0")]
+
+    monkeypatch.setattr(agent_mod, "retrieve", _fake_retrieve)
+
+    gen = agent_mod.stream_answer(
+        None, "q", session_id=None, provider=TrackingProvider())
+    kind, _ = await gen.__anext__()
+    assert kind == "sources"
+    kind, _ = await gen.__anext__()
+    assert kind == "delta"  # exactly one delta consumed -- the stream is
+                             # NOT exhausted; a second delta is still pending
+
+    await gen.aclose()
+    assert closed["value"] is True, (
+        "stream_answer must close the underlying provider stream when "
+        "closed early, not leave it running")

@@ -109,6 +109,21 @@ class ProviderMisconfigured(AppError):
     message = "The selected model provider is not configured correctly."
 
 
+class GenerationTimeout(AppError):
+    """A generation exceeded its idle or total wall-clock bound (Phase 8).
+
+    Distinct from `ProviderUnavailable`: the provider was reachable and
+    responded at least once (a health probe would report it healthy), it
+    simply never finished. Retryable, like any other transient provider
+    failure — nothing about a slow turn implies the config is wrong.
+    """
+
+    code = "generation_timeout"
+    http_status = status.HTTP_504_GATEWAY_TIMEOUT
+    message = "The generation did not finish within the allowed time."
+    retryable = True
+
+
 class ArtifactRenderFailed(AppError):
     """The sanitizer itself raised. A bug in `app.artifacts`, not a policy
     decision — the caller falls back to the escaped-source view either way.

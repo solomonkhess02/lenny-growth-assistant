@@ -77,6 +77,12 @@ services:
       PI_CLI_PATH: ${PI_CLI_PATH:-pi}
       PI_WORKING_DIR: ${PI_WORKING_DIR:-/tmp/pi-workdir}
 
+      # Phase 8: generation has no wall-clock bound without these. Defaults
+      # match backend/app/config.py; listed explicitly so tuning .env
+      # actually reaches the container -- .env itself is .dockerignore'd.
+      GENERATION_IDLE_TIMEOUT_S: ${GENERATION_IDLE_TIMEOUT_S:-120}
+      GENERATION_TIMEOUT_S: ${GENERATION_TIMEOUT_S:-900}
+
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000}
     ports:

@@ -40,6 +40,7 @@ export type StreamError = {
   code: string;
   message: string;
   retryable: boolean;
+  request_id?: string;
 };
 
 export type SessionSummary = {

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from app.config import get_settings
-from app.errors import ProviderMisconfigured, ProviderUnavailable
+from app.errors import GenerationTimeout, ProviderMisconfigured, ProviderUnavailable
 from app.pi_runtime import PiRuntime, map_error, resolve_cli
 from app.providers import ModelProvider, get_provider
 
@@ -698,3 +698,198 @@ async def test_an_entirely_unreadable_turn_says_so_not_no_output(
             pass
     assert "larger than" in exc.value.message
     assert "no output" not in exc.value.message.lower()
+
+
+# --------------------------------------------------------------------------
+# D1 (Phase 8) -- deterministic teardown of an abandoned generation
+# --------------------------------------------------------------------------
+import asyncio  # noqa: E402
+import signal  # noqa: E402
+import time  # noqa: E402
+
+
+async def test_early_close_kills_a_hung_child_promptly(runtime, tmp_path,
+                                                        monkeypatch):
+    """Closing the stream early (what a client disconnect does, via
+    `aclosing` in agent.py/ship30.py and the routers) must kill the child
+    immediately, not let it keep running as an orphan.
+
+    The stub sleeps for two minutes after its first line -- long enough that
+    if `aclose()` merely waited for the child to exit on its own, or leaked
+    it entirely, this test would time out. A prompt return proves the
+    process was actually killed, not just abandoned to run to completion.
+    """
+    script = tmp_path / "hang_pi.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.stdout.write({_delta('partial')!r} + chr(10))\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(120)\n",
+        encoding="utf-8")
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: [sys.executable, str(script)])
+
+    gen = runtime.stream(pi_provider="ollama", model="m", prompt="p")
+    try:
+        first = await gen.__anext__()
+        assert first == "partial"
+
+        started = time.perf_counter()
+        await asyncio.wait_for(gen.aclose(), timeout=10)
+        elapsed = time.perf_counter() - started
+        assert elapsed < 10, (
+            f"aclose() took {elapsed:.1f}s -- the child was not killed promptly")
+    finally:
+        await gen.aclose()  # no-op if already closed; belt and braces
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGKILL"),
+                    reason="signal.SIGKILL does not exist on this platform "
+                           "(Windows) -- this exercises the POSIX cleanup "
+                           "path, real on the deployed Linux container")
+async def test_posix_cleanup_kills_the_whole_process_group(runtime, monkeypatch):
+    """On POSIX, cleanup must kill the process GROUP, not just the direct
+    child -- Pi is a CLI shim launching a Node process, and `proc.kill()`
+    alone only ever reached the shim, orphaning the interpreter underneath.
+
+    `_use_process_group()` is forced and the spawn/kill are faked, so this
+    does not depend on real subprocess/process-group behaviour -- only on
+    `signal.SIGKILL` existing, which it does not on this dev host (Windows).
+    Patching that seam rather than `os.name` itself matters -- `os.name`
+    also drives pathlib's Windows/POSIX path classes, so forcing it
+    globally broke unrelated path handling here.
+    """
+    import app.pi_runtime as pi_mod
+
+    monkeypatch.setattr(pi_mod, "_use_process_group", lambda: True)
+
+    spawn_kwargs: dict = {}
+    killpg_calls: list[tuple[int, int]] = []
+
+    class FakeStdout:
+        def __init__(self, lines: list[bytes]):
+            self._lines = [*lines, b""]
+
+        async def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+    class FakeProc:
+        pid = 4242
+        returncode = None
+
+        def __init__(self):
+            self.stdout = FakeStdout([_delta("hi").encode() + b"\n"])
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_spawn(*args, **kwargs):
+        spawn_kwargs.update(kwargs)
+        return FakeProc()
+
+    def fake_killpg(pid, sig):
+        killpg_calls.append((pid, sig))
+
+    monkeypatch.setattr(pi_mod.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(pi_mod.os, "killpg", fake_killpg, raising=False)
+    monkeypatch.setattr(runtime, "build_command", lambda **kw: ["true"])
+
+    parts = [d async for d in runtime.stream(
+        pi_provider="ollama", model="m", prompt="p")]
+
+    assert parts == ["hi"]
+    assert spawn_kwargs.get("start_new_session") is True, (
+        "POSIX spawn must start a new session so the child is a process "
+        "group leader -- otherwise there is no group to kill")
+    assert killpg_calls == [(4242, pi_mod.signal.SIGKILL)], (
+        "cleanup must call os.killpg on the process GROUP, not proc.kill() "
+        "on the direct child alone")
+
+
+# --------------------------------------------------------------------------
+# Generation idle/total timeout (Phase 8)
+# --------------------------------------------------------------------------
+def _silent_stub_cli(tmp_path: Path, sleep_s: float) -> list[str]:
+    """A command that prints NOTHING and sleeps -- an unresponsive provider."""
+    script = tmp_path / "silent_pi.py"
+    script.write_text(
+        f"import time\ntime.sleep({sleep_s})\n", encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def _trickle_stub_cli(tmp_path: Path, *, count: int, interval_s: float) -> list[str]:
+    """A command that prints one delta every `interval_s` seconds.
+
+    Stands in for a slow-but-alive provider: each line arrives well inside
+    a short idle window, so the IDLE bound must never trip on it -- only the
+    TOTAL bound may, and only if the test gives it a small enough one.
+    """
+    script = tmp_path / "trickle_pi.py"
+    lines = [_delta(f"word{i} ") for i in range(count)]
+    payload = json.dumps(lines)
+    script.write_text(
+        "import sys, time, json\n"
+        f"for line in json.loads({payload!r}):\n"
+        "    sys.stdout.write(line + '\\n')\n"
+        "    sys.stdout.flush()\n"
+        f"    time.sleep({interval_s})\n",
+        encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+async def test_idle_timeout_fires_on_a_silent_provider(runtime, tmp_path,
+                                                        monkeypatch):
+    """A provider that emits nothing must not hang the turn forever."""
+    monkeypatch.setattr(runtime.settings, "generation_idle_timeout_s", 0.3)
+    monkeypatch.setattr(runtime.settings, "generation_timeout_s", 60)
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _silent_stub_cli(tmp_path, sleep_s=30))
+
+    started = time.perf_counter()
+    with pytest.raises(GenerationTimeout) as exc:
+        async for _ in runtime.stream(pi_provider="ollama", model="m", prompt="p"):
+            pass
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5, f"idle timeout took {elapsed:.1f}s to fire"
+    assert "no output" in exc.value.message.lower()
+    assert exc.value.code == "generation_timeout"
+    assert exc.value.retryable is True
+
+
+async def test_total_timeout_fires_on_a_slow_but_alive_provider(runtime, tmp_path,
+                                                                 monkeypatch):
+    """A provider that keeps emitting -- just too slowly overall -- must
+    still be bounded by the TOTAL limit, not run forever one word at a time.
+    """
+    monkeypatch.setattr(runtime.settings, "generation_idle_timeout_s", 5)
+    monkeypatch.setattr(runtime.settings, "generation_timeout_s", 0.3)
+    monkeypatch.setattr(runtime, "build_command", lambda **kw: _trickle_stub_cli(
+        tmp_path, count=20, interval_s=0.1))
+
+    started = time.perf_counter()
+    with pytest.raises(GenerationTimeout) as exc:
+        async for _ in runtime.stream(pi_provider="ollama", model="m", prompt="p"):
+            pass
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5, f"total timeout took {elapsed:.1f}s to fire"
+    assert "total time limit" in exc.value.message.lower()
+    assert exc.value.retryable is True
+
+
+async def test_a_slow_but_progressing_provider_does_not_trip_the_idle_timeout(
+        runtime, tmp_path, monkeypatch):
+    """The regression the idle bound must never cause: local generation is
+    measured in tens of seconds between tokens on a slow machine, and that
+    must keep working as long as SOMETHING arrives inside each window.
+    """
+    monkeypatch.setattr(runtime.settings, "generation_idle_timeout_s", 0.3)
+    monkeypatch.setattr(runtime.settings, "generation_timeout_s", 60)
+    monkeypatch.setattr(runtime, "build_command", lambda **kw: _trickle_stub_cli(
+        tmp_path, count=5, interval_s=0.15))
+
+    parts = [d async for d in runtime.stream(
+        pi_provider="ollama", model="m", prompt="p")]
+
+    assert parts == [f"word{i} " for i in range(5)]

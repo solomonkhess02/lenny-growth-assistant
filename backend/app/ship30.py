@@ -46,6 +46,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -338,12 +339,17 @@ async def stream_essay(
     }
 
     parts: list[str] = []
-    async for delta in provider.stream(
+    # See agent.stream_answer for why `aclosing` is required here: without
+    # it, a disconnect mid-essay left the provider (and, on a cloud provider,
+    # token spend) running as an orphan until the event loop's async-
+    # generator finalizer happened to collect this frame.
+    async with aclosing(provider.stream(
             build_prompt(question, answer, evidence),
             system_prompt=system_prompt(),
-            append_system_prompt=skill_body):
-        parts.append(delta)
-        yield "delta", {"text": delta}
+            append_system_prompt=skill_body)) as stream:
+        async for delta in stream:
+            parts.append(delta)
+            yield "delta", {"text": delta}
 
     markdown = "".join(parts).strip()
     report = verify_answer(markdown, evidence)          # MANDATORY

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
@@ -66,6 +67,38 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+@asynccontextmanager
+async def db_errors() -> AsyncIterator[None]:
+    """Map a raw SQLAlchemy/OS failure to the same AppError `get_session`
+    raises for it -- same ordering, same log events.
+
+    For code that builds its own session directly from `session_factory()`
+    rather than through FastAPI's `Depends`: a streaming SSE generator, which
+    keeps running after the endpoint function has returned and so cannot use
+    a request-scoped dependency. Without this, a DB outage mid-stream fell
+    through to a generic, non-retryable `internal_error` while the identical
+    failure on any other route correctly reported `database_unavailable`,
+    retryable -- the same mismapping `ResourceConflict` was split out to
+    prevent, reopened on the streaming path.
+
+    Deliberately does not create, commit, or roll back a session itself --
+    the caller's own `async with session_factory()() as ...:` already closes
+    (and thereby discards any uncommitted work on) the session when an
+    exception propagates through it, exactly as it does today.
+    """
+    try:
+        yield
+    except IntegrityError as exc:
+        # MUST precede the SQLAlchemyError branch: IntegrityError is a
+        # subclass, and letting it fall through reported a healthy
+        # database as unreachable. Same ordering as `get_session` above.
+        log.warning("integrity_conflict", extra={"exc_class": type(exc).__name__})
+        raise ResourceConflict() from exc
+    except (SQLAlchemyError, OSError) as exc:
+        log.error("database_error", extra={"exc_class": type(exc).__name__})
+        raise DatabaseUnavailable() from exc
 
 
 async def ping() -> tuple[bool, str | None]:

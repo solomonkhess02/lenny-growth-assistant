@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     # under the system temp root, which is never the repository.
     pi_working_dir: str = ""
 
+    # Phase 8: generation has no wall-clock bound without these. IDLE fires
+    # when the provider goes quiet mid-turn (a hung Ollama, a stalled cloud
+    # connection) and is the primary mechanism; TOTAL is a backstop for a
+    # provider that keeps emitting slowly forever. 120s idle is well above
+    # Phase 1's measured 31s time-to-first-token on the local demo path; 900s
+    # total is well above the measured 254.7s local essay
+    # (verification-matrix.md M16) with headroom for a slower machine.
+    generation_idle_timeout_s: int = 120
+    generation_timeout_s: int = 900
+
     # --- retrieval (Phase 3) -------------------------------------------------
     # Number of chunks fed to the model. ~3 is a UX decision, not a guess:
     # Phase 1 measured 30 of a 48s local answer as prompt processing at
@@ -159,6 +169,8 @@ class Settings(BaseSettings):
             "agent_framework": "pi",
             "pi_cli_path": self.pi_cli_path,
             "pi_working_dir": self.pi_working_dir or "(system temp)",
+            "generation_idle_timeout_s": self.generation_idle_timeout_s,
+            "generation_timeout_s": self.generation_timeout_s,
             "log_level": self.log_level,
         }
 

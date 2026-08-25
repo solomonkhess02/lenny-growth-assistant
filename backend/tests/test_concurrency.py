@@ -14,6 +14,8 @@ import asyncio
 
 import pytest
 
+from tests.test_streaming import _stream
+
 
 async def _new_session(client) -> str:
     r = await client.post("/api/sessions", json={"title": "c", "user_metadata": {}})
@@ -129,6 +131,79 @@ async def test_connection_failure_still_maps_to_database_unavailable():
 
     assert e.value.code == "database_unavailable"
     assert e.value.http_status == 503
+
+
+async def test_db_errors_maps_integrity_error_to_conflict():
+    """D2 (Phase 8). `db_errors()` -- the streaming-path counterpart of
+    `get_session` -- must apply the identical mapping.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.db import db_errors
+    from app.errors import ResourceConflict
+
+    with pytest.raises(ResourceConflict) as e:
+        async with db_errors():
+            raise IntegrityError("INSERT ...", {}, Exception("duplicate key"))
+
+    assert e.value.code == "conflict"
+    assert e.value.http_status == 409
+    assert e.value.retryable is True
+
+
+async def test_db_errors_maps_connection_failure_to_database_unavailable():
+    """The counterpart: a real outage must NOT be downgraded to a conflict."""
+    from app.db import db_errors
+    from app.errors import DatabaseUnavailable
+
+    with pytest.raises(DatabaseUnavailable) as e:
+        async with db_errors():
+            raise OSError("connection refused")
+
+    assert e.value.code == "database_unavailable"
+    assert e.value.http_status == 503
+    assert e.value.retryable is True
+
+
+async def test_db_errors_does_not_touch_unrelated_exceptions():
+    """An AppError or any other failure must pass through unchanged -- this
+    context manager maps DB-shaped failures only, never anything else."""
+    from app.db import db_errors
+    from app.errors import ProviderUnavailable
+
+    with pytest.raises(ProviderUnavailable):
+        async with db_errors():
+            raise ProviderUnavailable("dead provider")
+
+
+async def test_mid_stream_assistant_write_failure_reports_database_unavailable(
+        client, session_id, monkeypatch):
+    """D2 (Phase 8). The assistant-turn write happens on a hand-built session
+    (`session_factory()`), not `Depends(get_session)`, because the generator
+    keeps running after the endpoint has returned. Before `db_errors()` wrapped
+    it, a DB failure there fell through to a generic `internal_error`,
+    non-retryable -- the exact mismapping the two tests above exist to catch
+    at the unit level, reproduced here end-to-end through the real stream.
+    """
+    from app import repository as repo
+
+    real_append = repo.append_message
+
+    async def flaky_append(db, session_id, **kwargs):
+        if kwargs.get("role") == "assistant":
+            raise OSError("connection refused")
+        return await real_append(db, session_id, **kwargs)
+
+    monkeypatch.setattr(repo, "append_message", flaky_append)
+
+    events = await _stream(client, session_id, "trigger the failure")
+    kinds = [e for e, _ in events]
+
+    assert kinds[-1] == "error", f"stream did not end in an error: {kinds}"
+    err = events[-1][1]
+    assert err["code"] == "database_unavailable"
+    assert err["retryable"] is True
+    assert "done" not in kinds
 
 
 async def test_append_to_deleted_session_raises_not_found(client):

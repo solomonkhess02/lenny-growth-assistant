@@ -30,6 +30,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -291,10 +292,21 @@ async def stream_answer(
         return
 
     parts: list[str] = []
-    async for delta in provider.stream(
-            f"{SYSTEM_PROMPT}\n\n{build_prompt(question, evidence)}"):
-        parts.append(delta)
-        yield "delta", {"text": delta}
+    # `aclosing` guarantees the provider stream is closed deterministically --
+    # on normal completion, on an exception, AND on this generator itself
+    # being closed early (a client disconnect throws GeneratorExit at the
+    # `yield` below). Without it, closing depended on the asyncio event
+    # loop's async-generator finalizer eventually collecting this frame,
+    # which is neither synchronous with the disconnect nor guaranteed to run
+    # at all -- and until it did, the provider kept generating (and, on a
+    # cloud provider, burning tokens) as an orphan the caller could not see.
+    # The provider seam is what stays framework-agnostic here: this module
+    # never learns HOW that cleanup happens on the other side of it.
+    async with aclosing(provider.stream(
+            f"{SYSTEM_PROMPT}\n\n{build_prompt(question, evidence)}")) as stream:
+        async for delta in stream:
+            parts.append(delta)
+            yield "delta", {"text": delta}
 
     text = "".join(parts).strip()
     report = verify_answer(text, evidence)          # MANDATORY

@@ -42,6 +42,14 @@ export default function Message({
   }
 
   const retracted = turn.state === "retracted";
+  // Generation ended (error, disconnect, timeout) after some text had already
+  // streamed, but before a grounding verdict was ever computed. That text is
+  // not a checked answer -- verify_answer never ran on it -- and must never
+  // read as one just because it looks like normal prose. If `grounding` IS
+  // present here, verification genuinely completed (see GroundingBanner
+  // below) and this stays false, so a real PASS is never mislabelled either.
+  const interrupted = turn.state === "error" && !turn.grounding && Boolean(turn.content);
+  const untrustworthy = retracted || interrupted;
   const status = STATUS[turn.state];
 
   return (
@@ -72,7 +80,7 @@ export default function Message({
       )}
 
       {turn.content && (
-        <div className={`body ${retracted ? "retracted-text" : ""}`}>
+        <div className={`body ${untrustworthy ? "retracted-text" : ""}`}>
           {turn.content}
           {turn.state === "streaming" && <span className="caret">▍</span>}
         </div>
@@ -82,6 +90,13 @@ export default function Message({
         <div className="abstained-note">
           No sufficiently relevant transcript material was found, so the assistant declined
           to answer rather than guess. This is the system working as intended.
+        </div>
+      )}
+
+      {interrupted && (
+        <div className="unverified-note" role="alert">
+          ⚠ Unverified — generation ended before this could be checked against sources.
+          Treat the text above as provisional, not a confirmed answer.
         </div>
       )}
 

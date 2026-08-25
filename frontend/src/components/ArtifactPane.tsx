@@ -130,6 +130,13 @@ export default function ArtifactPane({
 }) {
   const status = essay ? STATUS[essay.state] : undefined;
   const retracted = essay?.state === "retracted";
+  // Same rule as the chat turn: generation that ended before a grounding
+  // verdict ever ran is not a checked essay, no matter how much prose is on
+  // screen. If `grounding` IS present, verification genuinely completed and
+  // this stays false -- a real PASS or a real FAIL is never relabelled.
+  const interrupted =
+    essay?.state === "error" && !essay?.grounding && Boolean(essay?.markdown);
+  const untrustworthy = retracted || interrupted;
   const working = Boolean(status);
 
   // A retracted essay is never offered a rich view -- there is no toggle
@@ -263,7 +270,7 @@ export default function ArtifactPane({
               {essay.markdown && view === "source" && (
                 // A React text child, so the browser never parses it as markup.
                 // This is the same escaping path the chat body uses.
-                <pre className={`essay-body ${retracted ? "retracted-text" : ""}`}>
+                <pre className={`essay-body ${untrustworthy ? "retracted-text" : ""}`}>
                   {essay.markdown}
                   {essay.state === "streaming" && <span className="caret">▍</span>}
                 </pre>
@@ -274,6 +281,14 @@ export default function ArtifactPane({
                   Formatted view unavailable ({essay.renderError.code}). Showing
                   source.
                 </p>
+              )}
+
+              {interrupted && (
+                <div className="unverified-note" role="alert">
+                  ⚠ Unverified — generation ended before this essay could be checked
+                  against sources. Treat the text above as provisional, not a
+                  confirmed essay.
+                </div>
               )}
 
               {essay.grounding && <GroundingBanner grounding={essay.grounding} />}

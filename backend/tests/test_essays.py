@@ -293,6 +293,164 @@ async def test_a_failing_provider_is_surfaced_never_substituted(client, monkeypa
         "the failing provider appears to have been substituted")
 
 
+async def test_a_provider_failure_after_partial_essay_emits_no_grounding(
+        client, monkeypatch):
+    """D3 (Phase 8). Partial essay text must never carry an invented verdict.
+
+    Mirrors the chat-side guarantee: if the provider dies after some Markdown
+    has already streamed, `verify_answer` must never run on it. A verdict
+    here -- pass or fail -- would let a reader mistake an interrupted draft
+    for a checked essay.
+    """
+    from app import providers as providers_mod
+    from app import ship30 as ship30_mod
+    from app.errors import ProviderUnavailable
+    from app.retrieval import Evidence
+
+    async def _fake_assemble(db, *, stored_sources, question, k=None):
+        ev = [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0")]
+        return ship30_mod.EssayEvidence(items=ev, carried=1)
+
+    class DyingMidStreamRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                yield "# A partial essay\n\nSome text before the provider dies. "
+                raise ProviderUnavailable("Connection reset mid-generation.")
+            return gen()
+
+    monkeypatch.setattr(ship30_mod, "assemble_evidence", _fake_assemble)
+    monkeypatch.setattr(providers_mod, "PiRuntime", DyingMidStreamRuntime)
+
+    sid = (await client.post("/api/sessions", json={"provider": "deepseek"})).json()["id"]
+    msg_id = await _seed_answer(client, sid)
+    _, raw = await _post_essay(client, sid, msg_id)
+
+    events = parse_sse(raw)
+    kinds = [e for e, _ in events]
+    assert "delta" in kinds, "test premise: some markdown must have streamed"
+    assert kinds[-1] == "error"
+    assert "grounding" not in kinds, (
+        "verify_answer must never run on an incomplete essay -- a verdict "
+        "here would let partial text be mistaken for a checked one")
+    assert "done" not in kinds
+
+    meta = events[0][1]
+    err = events[-1][1]
+    assert err["request_id"], "error frame must carry a request_id"
+    assert err["request_id"] == meta["request_id"]
+
+
+async def test_a_generation_timeout_ends_the_essay_stream_in_a_retryable_error(
+        client, monkeypatch):
+    """Phase 8, essay mirror of the chat-side timeout test. `GenerationTimeout`
+    must reach the client as a proper terminal error, not hang the pane's
+    ten-minute clock forever with nothing to show for it.
+    """
+    from app import providers as providers_mod
+    from app import ship30 as ship30_mod
+    from app.errors import GenerationTimeout
+    from app.retrieval import Evidence
+
+    async def _fake_assemble(db, *, stored_sources, question, k=None):
+        ev = [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0")]
+        return ship30_mod.EssayEvidence(items=ev, carried=1)
+
+    class HangingRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                yield "# A partial essay\n\nSome text, then silence. "
+                raise GenerationTimeout(
+                    "Provider 'ollama' produced no output for 120s.")
+            return gen()
+
+    monkeypatch.setattr(ship30_mod, "assemble_evidence", _fake_assemble)
+    monkeypatch.setattr(providers_mod, "PiRuntime", HangingRuntime)
+
+    sid = (await client.post("/api/sessions", json={"provider": "deepseek"})).json()["id"]
+    msg_id = await _seed_answer(client, sid)
+    _, raw = await _post_essay(client, sid, msg_id)
+
+    events = parse_sse(raw)
+    kinds = [e for e, _ in events]
+    assert kinds[-1] == "error", f"stream did not end in an error: {kinds}"
+    err = events[-1][1]
+    assert err["code"] == "generation_timeout"
+    assert err["retryable"] is True
+    assert "grounding" not in kinds
+    assert "done" not in kinds
+
+
+async def test_mid_stream_essay_write_failure_reports_database_unavailable(
+        client, monkeypatch):
+    """D2 (Phase 8). The essay write happens on a hand-built session
+    (`session_factory()`), not `Depends(get_session)` -- mirrors the chat-side
+    regression test in test_concurrency.py. Before `db_errors()` wrapped it, a
+    DB failure here fell through to a generic `internal_error`, non-retryable,
+    instead of the `database_unavailable` every other route reports for it.
+
+    Generation must complete cleanly here (unlike the provider-failure tests
+    above): the point is to isolate the PERSISTENCE failure, so the provider
+    is stubbed to succeed and only `repo.create_essay` is made to fail.
+    """
+    from app import providers as providers_mod
+    from app import repository as repo
+    from app import ship30 as ship30_mod
+    from app.retrieval import Evidence
+
+    async def _fake_assemble(db, *, stored_sources, question, k=None):
+        ev = [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0")]
+        return ship30_mod.EssayEvidence(items=ev, carried=1)
+
+    class WorkingRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                yield "# An essay\n\nSome finished text citing [E1]."
+            return gen()
+
+    async def flaky_create_essay(db, session_id, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(ship30_mod, "assemble_evidence", _fake_assemble)
+    monkeypatch.setattr(providers_mod, "PiRuntime", WorkingRuntime)
+    monkeypatch.setattr(repo, "create_essay", flaky_create_essay)
+
+    sid = (await client.post("/api/sessions", json={"provider": "ollama"})).json()["id"]
+    msg_id = await _seed_answer(client, sid)
+    _, raw = await _post_essay(client, sid, msg_id)
+
+    events = parse_sse(raw)
+    kinds = [e for e, _ in events]
+    assert kinds[-1] == "error", f"stream did not end in an error: {kinds}"
+    err = events[-1][1]
+    assert err["code"] == "database_unavailable"
+    assert err["retryable"] is True
+    assert "done" not in kinds
+
+
 # --------------------------------------------------------------------------
 # Persistence and replay
 # --------------------------------------------------------------------------
@@ -580,3 +738,56 @@ async def test_render_neutralizes_links_and_images(client, session_id,
     assert "evil.example.com" not in html
     assert "[image removed]" in html
     assert body["stripped"] == 2
+
+
+async def test_stream_essay_closes_the_provider_stream_on_early_close(monkeypatch):
+    """D1 (Phase 8), the ship30 half of the fix -- mirrors
+    test_stream_answer_closes_the_provider_stream_on_early_close in
+    test_streaming.py. Closing `stream_essay` early must propagate the
+    close down to `provider.stream()`, not leave it running until the
+    event loop's async-generator finalizer happens to collect the frame.
+
+    stub-based, no corpus/Ollama needed -- kept here rather than in
+    test_ship30.py, which gates the whole module on both.
+    """
+    from app import ship30 as ship30_mod
+    from app.retrieval import Evidence
+
+    closed = {"value": False}
+
+    class TrackingProvider:
+        name = "ollama"
+        model = "m"
+
+        def stream(self, prompt, **kwargs):
+            async def gen():
+                try:
+                    yield "# An essay\n\n"
+                    yield "More text."
+                finally:
+                    closed["value"] = True
+            return gen()
+
+    async def _fake_assemble(db, *, stored_sources, question, k=None):
+        ev = [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0")]
+        return ship30_mod.EssayEvidence(items=ev, carried=1)
+
+    monkeypatch.setattr(ship30_mod, "assemble_evidence", _fake_assemble)
+
+    gen = ship30_mod.stream_essay(
+        None, question="q", answer="a", stored_sources=[],
+        provider=TrackingProvider())
+    kind, _ = await gen.__anext__()
+    assert kind == "sources"
+    kind, _ = await gen.__anext__()
+    assert kind == "delta"  # one delta consumed; the stream is NOT exhausted
+
+    await gen.aclose()
+    assert closed["value"] is True, (
+        "stream_essay must close the underlying provider stream when "
+        "closed early, not leave it running")

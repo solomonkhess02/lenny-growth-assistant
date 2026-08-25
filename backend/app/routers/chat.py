@@ -14,7 +14,7 @@ Event protocol (SSE `event:` / `data:` JSON):
   delta     - {"text": "..."} incremental content
   grounding - verification verdict for the completed answer
   done      - {"message_id", "seq", "latency_ms", "trustworthy", ...}
-  error     - {"code", "message", "retryable"}                 (terminal)
+  error     - {"code", "message", "retryable", "request_id"}    (terminal)
 
 `sources` precedes `delta` deliberately: citations are evidence the system
 retrieved, not claims the model made, so they are trustworthy before a single
@@ -22,11 +22,13 @@ token is generated.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -34,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import repository as repo
 from ..agent import stream_answer
-from ..db import get_session, session_factory
+from ..db import db_errors, get_session, session_factory
 from ..errors import AppError
 from ..logging_conf import request_id_var
 from ..providers import ModelProvider, get_provider
@@ -89,13 +91,24 @@ async def post_message(
             grounding: dict = {}
             sources: list[dict] = []
 
-            async with session_factory()() as read:
-                async for event, payload in stream_answer(
-                        read, body.content, session_id=session_id,
-                        provider=provider):
+            async with (
+                session_factory()() as read,
+                db_errors(),
+                # Deterministic teardown: if this loop exits early (the
+                # `return` below, or any exception), `aclosing` closes
+                # `stream_answer`'s generator synchronously here rather than
+                # waiting on the event loop's async-generator finalizer --
+                # which is what let an abandoned Pi subprocess keep running,
+                # unobserved, until GC happened to collect it.
+                aclosing(stream_answer(
+                    read, body.content, session_id=session_id,
+                    provider=provider)) as answer_stream,
+            ):
+                async for event, payload in answer_stream:
                     if await request.is_disconnected():
-                        log.info("client_disconnected",
-                                 extra={"session_id": str(session_id)})
+                        log.info("client_disconnected", extra={
+                            "session_id": str(session_id),
+                            "outcome": "abandoned"})
                         return
                     if event == "complete":
                         final = payload
@@ -111,7 +124,7 @@ async def post_message(
             content = final.get("content", "").strip()
             latency = int((time.perf_counter() - t0) * 1000)
 
-            async with session_factory()() as write:
+            async with session_factory()() as write, db_errors():
                 msg = await repo.append_message(
                     write, session_id, role="assistant", content=content,
                     provider=provider.name, model=provider.model,
@@ -148,13 +161,23 @@ async def post_message(
                 "session_id": str(session_id), "error_code": exc.code,
                 "outcome": "error"})
             yield sse("error", {"code": exc.code, "message": exc.message,
-                                "retryable": exc.retryable})
+                                "retryable": exc.retryable, "request_id": rid})
+        except asyncio.CancelledError:
+            # Starlette's own disconnect handling won the race against the
+            # `is_disconnected()` poll above -- the transport is already
+            # gone, so no frame can reach the client. This must never be
+            # swallowed (a cancellation has to keep propagating for the
+            # task to actually stop), but it must also never be silent:
+            # without this, a cancelled stream logged NOTHING at all.
+            log.info("stream_cancelled", extra={
+                "session_id": str(session_id), "outcome": "cancelled"})
+            raise
         except Exception:
             log.exception("stream_unhandled", extra={
                 "session_id": str(session_id), "outcome": "error"})
             yield sse("error", {"code": "internal_error",
                                 "message": "An unexpected error occurred.",
-                                "retryable": False})
+                                "retryable": False, "request_id": rid})
 
     return StreamingResponse(
         generator(),

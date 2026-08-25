@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -43,7 +44,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from .config import Settings, get_settings
-from .errors import ProviderMisconfigured, ProviderUnavailable
+from .errors import GenerationTimeout, ProviderMisconfigured, ProviderUnavailable
 
 log = logging.getLogger("app.pi")
 
@@ -99,6 +100,18 @@ def classify_event(event: dict) -> tuple[str, str] | None:
 
     text = delta_event.get("delta") or ""
     return ("delta", text) if text else None
+
+
+def _use_process_group() -> bool:
+    """Whether cleanup should kill Pi's whole process group rather than just
+    the direct child. A separate, monkeypatch-friendly seam rather than an
+    inline `os.name == "posix"` check: pathlib re-derives `WindowsPath` vs
+    `PosixPath` from `os.name` on every `Path()` construction, so patching
+    `os.name` itself to test the POSIX branch on a Windows host breaks
+    unrelated path handling (`workdir()` above included) rather than
+    isolating the one branch under test.
+    """
+    return os.name == "posix"
 
 
 def resolve_cli(configured: str) -> str | None:
@@ -275,6 +288,14 @@ class PiRuntime:
         oversized = 0
         failure: Exception | None = None
 
+        # A new session (POSIX only) makes this process the leader of its own
+        # process group, so killing the GROUP on cleanup also reaches any
+        # grandchild it spawns -- Pi is a Node process launched via a CLI
+        # shim, and `proc.kill()` alone only ever signalled the direct child.
+        # Windows has no process-group equivalent here; `proc.kill()` there
+        # remains best-effort against the direct child, as it was before.
+        posix_group = _use_process_group()
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -285,6 +306,7 @@ class PiRuntime:
                 # Not the 64 KiB default: Pi's terminal events carry the whole
                 # conversation. See _STDOUT_LINE_LIMIT.
                 limit=_STDOUT_LINE_LIMIT,
+                **({"start_new_session": True} if posix_group else {}),
             )
         except FileNotFoundError as exc:
             for f in scratch:
@@ -293,11 +315,42 @@ class PiRuntime:
                 f"Could not start the Pi CLI at '{self.cli_path}'."
             ) from exc
 
+        idle_timeout = self.settings.generation_idle_timeout_s
+        total_timeout = self.settings.generation_timeout_s
+
         try:
             assert proc.stdout is not None
             while True:
+                # A single `wait_for` per read enforces BOTH bounds: its
+                # timeout shrinks to whatever is left of the total budget,
+                # so a provider that keeps emitting -- just slowly -- never
+                # trips the idle bound as long as each line arrives inside
+                # its own window, while a provider that goes silent never
+                # outlives either one. Deliberately NOT `asyncio.timeout()`
+                # spanning the loop: this loop `yield`s (below), and a timer
+                # spanning a yield keeps running while control is with the
+                # consumer doing unrelated work (DB writes, SSE framing),
+                # which can fire the deadline for reasons that have nothing
+                # to do with this generation.
+                remaining_total = total_timeout - (time.perf_counter() - t0)
+                if remaining_total <= 0:
+                    failure = GenerationTimeout(
+                        f"Generation for provider '{pi_provider}' exceeded "
+                        f"the {total_timeout}s total time limit.")
+                    break
+                wait = min(idle_timeout, remaining_total)
                 try:
-                    raw = await proc.stdout.readline()
+                    raw = await asyncio.wait_for(proc.stdout.readline(), timeout=wait)
+                except asyncio.TimeoutError:
+                    if wait < idle_timeout:
+                        failure = GenerationTimeout(
+                            f"Generation for provider '{pi_provider}' "
+                            f"exceeded the {total_timeout}s total time limit.")
+                    else:
+                        failure = GenerationTimeout(
+                            f"Provider '{pi_provider}' produced no output "
+                            f"for {idle_timeout}s.")
+                    break
                 except ValueError:
                     # One event past _STDOUT_LINE_LIMIT. asyncio has already
                     # dropped it from the buffer, so the stream stays usable and
@@ -339,8 +392,11 @@ class PiRuntime:
             stderr = b""
             if proc.returncode is None:
                 try:
-                    proc.kill()
-                except ProcessLookupError:
+                    if posix_group:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    else:
+                        proc.kill()
+                except (ProcessLookupError, PermissionError):
                     pass
             try:
                 _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
