@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import repository as repo
 from ..db import get_session
+from ..errors import ValidationFailed
 from ..models import Session
-from ..providers import get_provider
+from ..providers import available_providers, get_provider
 from ..schemas import MessageOut, SessionCreate, SessionDetail, SessionOut
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -26,7 +27,23 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     body: SessionCreate, db: AsyncSession = Depends(get_session)
 ) -> Session:
-    provider = get_provider()
+    """Create a session and fix its provider for good.
+
+    The provider is stamped here and never changes afterwards. Switching
+    provider is `POST /api/sessions` again -- there is deliberately no route
+    that mutates an existing session's provider.
+    """
+    if body.provider is not None and body.provider not in available_providers():
+        # A bad name in a request BODY is the caller's mistake, so it is a 422.
+        # get_provider() would raise ProviderMisconfigured (500), which is the
+        # right code for a broken deployment and the wrong one for a typo.
+        raise ValidationFailed(
+            f"Unknown provider {body.provider!r}. "
+            f"Available: {', '.join(available_providers())}.",
+            field="provider",
+        )
+
+    provider = get_provider(body.provider)
     return await repo.create_session(
         db, title=body.title, user_metadata=body.user_metadata,
         provider=provider.name, model=provider.model,

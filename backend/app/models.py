@@ -41,8 +41,14 @@ class Session(Base):
     user_metadata: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}")
 
-    # The provider in force when the session was created. Per-message provider
-    # is recorded on the message, since the user may switch mid-session.
+    # Chosen when the session is created, and IMMUTABLE thereafter: no route
+    # mutates these, and MessageCreate carries no provider field. Switching
+    # provider means creating a new session. That is what lets these two
+    # columns be read as a true record of what produced every turn here,
+    # rather than a snapshot of whatever configuration held at creation time.
+    #
+    # The same pair is copied onto each assistant message as well, so a turn
+    # remains self-describing when read on its own.
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
 
@@ -88,6 +94,20 @@ class Message(Base):
     provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # The evidence this turn was built from, exactly as it was streamed to the
+    # client. Every field originates in a stored chunk row (agent.source_
+    # summaries), never in model output, so replayed citations are as
+    # trustworthy as live ones -- and an answer cannot lose its attribution
+    # just because the reader refreshed the page.
+    sources: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]")
+
+    # The verification verdict. NULLABLE, and the distinction matters: NULL
+    # means no verdict was recorded (a user turn, or a row written before
+    # Phase 5), which is not the same claim as a recorded PASS. An unverified
+    # answer must never be able to read as a verified one.
+    grounding: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -23,9 +23,14 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 async def list_providers() -> dict:
     settings = get_settings()
     return {
+        # The DEFAULT for new sessions. Since Phase 5 a session may be created
+        # on any available provider, so this is no longer the only answer to
+        # "which provider is in use" -- a session's own provider is.
         "selected": settings.llm_provider,
+        "default": settings.llm_provider,
         "available": available_providers(),
-        "detail": "Selection is configuration only (LLM_PROVIDER). "
+        "detail": "Provider is chosen when a session is created and is immutable "
+                  "for that session; LLM_PROVIDER is the default for new sessions. "
                   "No automatic substitution exists anywhere in the system.",
     }
 

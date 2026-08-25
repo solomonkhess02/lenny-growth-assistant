@@ -81,8 +81,14 @@ async def append_message(
     db: AsyncSession, session_id: uuid.UUID, *, role: Role, content: str,
     provider: str | None = None, model: str | None = None,
     latency_ms: int | None = None,
+    sources: list[dict] | None = None, grounding: dict | None = None,
 ) -> Message:
     """Append a turn, allocating its sequence number atomically.
+
+    `sources` and `grounding` are stored alongside the text so a turn keeps its
+    evidence and its verdict on reload. Both default to "nothing recorded"
+    (`[]` and NULL) rather than to an empty-but-present verdict, because
+    "unverified" and "verified clean" must stay distinguishable.
 
     Concurrency: the parent `sessions` row is locked FOR UPDATE before
     MAX(seq) is read, so concurrent appends to the SAME session serialise
@@ -111,6 +117,7 @@ async def append_message(
     msg = Message(
         session_id=session_id, seq=seq, role=role, content=content,
         provider=provider, model=model, latency_ms=latency_ms,
+        sources=sources or [], grounding=grounding,
     )
     db.add(msg)
     await db.flush()

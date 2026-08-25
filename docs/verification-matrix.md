@@ -7,7 +7,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 - **Status key:** ✅ met with evidence · 🟡 partially met · ⬜ not started (phase not reached)
 - Test names are runnable: `cd backend && python -m pytest -k <name>`
-- Current suite: **240 passed, 0 failed** (2026-08-25, Phase 4 + Pi adoption)
+- Current suite: **263 passed, 0 failed, 0 skipped** (2026-08-25, Phase 5)
 
 ---
 
@@ -31,8 +31,8 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 | Req | Acceptance criteria | Evidence | Status |
 |---|---|---|---|
 | Switch by configuration only | No business-logic branch on provider identity | `get_provider()`; `tests/test_providers.py` (13) | ✅ |
-| Selected provider visible | Exposed via API/UI | `GET /api/providers`, `/api/retrieval/status` | 🟡 API done; UI in Phase 5 |
-| Fallback documented | Documented, and **no silent substitution** | Locked Provider UX contract, req. 5 & 9 | 🟡 documented; enforced in Phase 5 |
+| Selected provider visible | Exposed via API **and UI** | `GET /api/providers`, `/api/config`; header pill shows the active session's provider on every turn incl. replayed history | ✅ |
+| Fallback documented | Documented, and **no silent substitution** | `test_a_failing_provider_is_surfaced_never_substituted` — dead provider ends the stream in `provider_unavailable` and the other provider's name appears nowhere in it; no client-side fallback path exists | ✅ enforced |
 
 ## §3.3 Knowledge base
 
@@ -52,8 +52,9 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 |---|---|---|---|
 | Q&A grounded in transcripts | Answerable → cited answer; unsupported → abstain | 38 eval + 22 agent tests; grounded answers on Ollama (24.2s) and DeepSeek (3.9s) | ✅ |
 | Ship 30 essay generation | ~1,250 words, correct structure | — | ⬜ Phase 6 |
-| Artifact Viewer | Renders Markdown/HTML side by side | — | ⬜ Phase 7 |
-| Artifact isolation | Stated permit/block/strip policy | Decision D-4 recorded | ⬜ Phase 7 |
+| Artifact Viewer — integration | Pane present, open/close, empty + loading states | `frontend/src/components/ArtifactPane.tsx` | ✅ Phase 5 (layout/plumbing only) |
+| Artifact Viewer — rendering | Renders Markdown/HTML side by side | — | ⬜ Phase 7 (needs Phase 6 content) |
+| Artifact isolation | Stated permit/block/strip policy | Decision D-4 recorded. Phase 5 renders **no** untrusted content — no `dangerouslySetInnerHTML`, no iframe — so the pane cannot outrun its policy | ⬜ Phase 7 |
 
 ## §5 Resilience (failure modes)
 
@@ -97,16 +98,45 @@ Run after `docker compose up` on a clean checkout. Steps marked ⬜ depend on un
 | M6 | `GET /api/retrieval/status` | 20 transcripts, 1,395 chunks, `compatible: true` | ✅ verified |
 | M7 | `GET /api/retrieval/search?q=How does Duolingo use streaks...` | `supported: true`, deep-linked citations | ✅ verified |
 | M8 | `GET /api/retrieval/search?q=How do I make sourdough starter?` | `supported: false`, `count: 0` | ✅ verified |
-| M9 | Open a citation `citation_url` in a browser | Video opens at the quoted moment | ⬜ **not performed** — see gaps |
+| M9 | Open a citation `citation_url` in a browser | Video opens at the quoted moment | ✅ **verified 2026-08-25** — clicked `[E1]` in the running app; opened `youtube.com/watch?v=_CCwoQZH5hI&t=418`; player read **6:58 / 1:28:31** on the cited episode and `video.currentTime === 418`. Chunk at 418s matches transcript line 96 `(00:06:58)` |
 | M10 | Stop Ollama, retry search | Actionable error naming `ollama serve` | ✅ covered by test; not manually rehearsed |
 | M11 | Stop db container, hit API | 503 `database_unavailable` | ✅ verified in Phase 2B |
-| M12 | Ask an answerable question in the UI | Cited answer | 🟡 API verified; citation rendering is Phase 5 |
-| M13 | Ask an unsupported question | Explicit abstention, no fabrication | ✅ verified (48 ms, model never invoked) |
+| M12 | Ask an answerable question in the UI | Cited answer | ✅ **verified in-browser 2026-08-25** — 2 citation cards rendered, answer cites `[E1]`/`[E2]` inline, `✓ Verified against sources`, 28.9 s |
+| M13 | Ask an unsupported question | Explicit abstention, no fabrication | ✅ **verified in-browser** — own neutral state (0.1 s), no error styling, no citations; DOM probe: 0 `.turn-error`, 0 `.verdict.fail` |
 | M14 | Follow-up question | Resolves against prior turn | ✅ at retrieval level |
 | M15 | New session | No bleed from previous session | ✅ verified |
 | M16 | Generate a Ship 30 essay on Ollama | ~1,250 words, renders | ⬜ Phase 6 |
 | M17 | Script-bearing HTML artifact | Handled per stated policy | ⬜ Phase 7 |
 | M18 | Kill Ollama mid-request | Structured, legible, logged error | ⬜ Phase 8 |
+| M19 | Provider indicator matches the active session | Header names the session's provider + model, and its health | ✅ **verified in-browser** — deepseek session under `LLM_PROVIDER=ollama` shows `deepseek · deepseek-v4-pro`; a degraded session shows `ollama · qwen3:4b-instruct · unavailable` |
+| M20 | Retry does not change provider | Reissue stays on the session's provider | ✅ **verified in-browser** — provider unreachable; header identical before/after Retry; across every message stream the only provider named was `ollama`, never the healthy `deepseek` |
+| M21 | Citations/grounding replay after reload | Reload restores evidence and verdict | ✅ **verified in-browser** — post-reload view pixel-identical to live, incl. citations, 28.9 s latency and verdict |
+| M22 | Artifact pane layout / open / close | Pane renders, collapses, restores; no untrusted HTML | ✅ **verified in-browser** — empty state + Hide/Show; renders no generated content (Phase 7 owns isolation) |
+
+## Phase 5 additions
+
+Provider selection is per session and **immutable**: chosen at creation, fixed for every turn,
+never mutated. Changing provider means creating a new session — there is no route or control
+that does otherwise.
+
+| Req | Acceptance criteria | Evidence | Status |
+|---|---|---|---|
+| Provider chosen at session creation | `SessionCreate.provider`; session stamps provider+model | `test_session_can_select_a_provider_other_than_the_default` | ✅ |
+| Unknown provider rejected cleanly | 422 `validation_failed`, not a 500 | `test_unknown_provider_is_422_not_500` | ✅ |
+| Default unchanged when omitted | Falls back to `LLM_PROVIDER` | `test_omitted_provider_falls_back_to_configuration` | ✅ |
+| Turn runs on the **session's** provider | `meta.provider` follows the session, not config | `test_turn_runs_on_the_sessions_provider_not_the_configured_one`; verified live (deepseek session under `LLM_PROVIDER=ollama`) | ✅ |
+| Provider is immutable | No per-message override; no PATCH/PUT route | `test_message_body_cannot_carry_a_provider`, `test_no_route_mutates_an_existing_sessions_provider` | ✅ |
+| Sessions do not contaminate each other | Two providers, two live sessions, each stamped correctly | `test_sessions_on_different_providers_do_not_contaminate_each_other` | ✅ |
+| **No automatic substitution** | Dead provider → terminal error; other provider never named | `test_a_failing_provider_is_surfaced_never_substituted` | ✅ |
+| Citations persist | Stored sources == streamed sources | `test_grounded_answer_persists_its_citations`; verified live via `GET /api/sessions/{id}` | ✅ |
+| Verdict persists | FAIL survives reload with its details | `test_failed_verdict_is_persisted_not_dropped`; live replay derived state `retracted` | ✅ |
+| Abstention persists distinctly | `sources: []` + a recorded clean verdict | `test_abstention_persists_empty_sources_and_a_clean_verdict` | ✅ |
+| Unverified ≠ verified-clean | `grounding` NULL on user turns, not a PASS-shaped default | `test_user_turns_carry_no_verdict` | ✅ |
+| Migration is reversible | upgrade → downgrade → upgrade; legacy rows survive | Scratch DB with a pre-Phase-5 row: survived, `sources` → `[]`, `grounding` → NULL | ✅ |
+| Sources render before text | Citation cards precede the answer in the DOM | **Measured in-browser**: at the instant `.citations` appeared, `.msg.assistant .body` count was **0**; screenshot shows evidence + “Evidence found · generating…” with no answer text | ✅ |
+| Failed verdict retracts | Struck-through, dimmed, banner names what failed | **Verified in-browser** on a replayed FAIL row: computed style `text-decoration-line: line-through`, `opacity: 0.55`; banner “Answer retracted — it failed verification” listing both fabricated quotes and `[E7]` | ✅ |
+| Abstention is not an error | Own state and styling, no error colour | **Verified in-browser** — neutral grey note, 0 error elements in the DOM | ✅ |
+| Frontend type gate | `npm run build` clean | `tsc -b && vite build` → 40 modules, 0 errors | ✅ |
 
 ## Phase 4 additions
 
@@ -159,19 +189,31 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
 ## Known gaps
 
 1. **No `README.md`.** The repo is public and renders bare. Highest-value missing artifact.
-2. **M9 never performed.** Citation deep links are verified *structurally* (URL built from stored `start_seconds`, text confirmed present in the source file) but no one has clicked one and watched the video land on the quoted sentence. That is the one claim in the citation chain resting on construction rather than observation.
+2. ~~M9 never performed~~ — **RESOLVED (2026-08-25).** A citation was clicked in the running app and followed to YouTube: correct episode, player at **6:58**, `video.currentTime === 418`, matching transcript line 96 `(00:06:58)`. The citation chain no longer rests on construction alone.
 3. **Calibration margin is thin** — +0.031 on n=25. See `retrieval-calibration.md`.
 4. **Attribution 11/16 at top-1.** Two supported questions miss their expected episode entirely. Reported, not tuned away.
 5. **Agent-transcripts folder (deliverable 6) not created.** Decisions and corrections are recorded in the plan and `docs/`, but not in the required layout.
 6. ~~Agent SDK not used~~ — **RESOLVED.** Pi Coding Agent adopted as the §3.1 agent
    framework. Cost accepted knowingly: local latency 24.2 s → 36.4 s, cloud 3.9 s → 19.8 s,
    from Node process startup per request. `--mode rpc` would amortise it.
-7. **Streamed text is provisional until the `grounding` event.** Verification cannot
-   precede the text it verifies. A failed verdict arrives after the words are on screen,
-   so the UI must render it as a retraction (Phase 5).
-8. **UI does not yet render sources or grounding** — the events are emitted and ignored.
+7. ~~Streamed text is provisional until the `grounding` event~~ — **ADDRESSED (Phase 5).**
+   Verification still cannot precede the text it verifies, but the UI now treats a failed
+   verdict as a retraction: the answer is struck through and dimmed under a banner naming the
+   fabricated quotes and invalid tags. `GroundingBanner.tsx`.
+8. ~~UI does not yet render sources or grounding~~ — **RESOLVED (Phase 5).** Citations render
+   from the `sources` event *before* any text, and the verdict renders after it. Both are now
+   persisted (`messages.sources`, `messages.grounding`, migration `0003`) and survive reload —
+   verified live, including a FAILED verdict replaying as a retraction.
 9. ~~Pi is not provisioned in the Docker image~~ — **RESOLVED (Phase 4.6).** Pi and a Node 22
    runtime are baked into the image; `deploy/pi-models.json` is installed at
    `/home/appuser/.pi/agent/models.json`. Verified by cold build and in-container generation on
    both providers. See `agent-framework-comparison.md` §14.
 10. **Ingestion needs network once** to fetch the pinned corpus. Must be a documented README prerequisite alongside `ollama pull`.
+
+11. ~~Phase 5 UI verified structurally, not visually~~ — **RESOLVED (2026-08-25).** Driven in
+    headless Chromium against the real Docker stack: citations-before-text measured in the DOM,
+    retraction confirmed by computed style, abstention confirmed as a non-error state, provider
+    indicator and retry checked against a deliberately unreachable provider, reload replay
+    confirmed, artifact pane open/close confirmed, and M9 followed to the video. Screenshots
+    were reviewed. The driver lives outside the repo (scratchpad) — **no** test framework was
+    added to `frontend/package.json`, per the Phase 5 constraint.

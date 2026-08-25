@@ -55,7 +55,15 @@ async def post_message(
     request: Request,
     db: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    provider: ModelProvider = get_provider()
+    # The SESSION decides the provider, not LLM_PROVIDER. A session's provider
+    # is stamped at creation and immutable, so every turn in a conversation
+    # runs on the same model -- and a session created against deepseek keeps
+    # answering on deepseek even if the deployment's default is ollama.
+    #
+    # Loaded before append_message, which takes FOR UPDATE on this same row:
+    # a plain read first is cheap and keeps the lock window to the write.
+    session = await repo.load_session(db, session_id)
+    provider: ModelProvider = get_provider(session.provider)
 
     # Persist the user turn and COMMIT before streaming. The generator below
     # runs after this handler returns and opens its own session; an
@@ -79,6 +87,7 @@ async def post_message(
         try:
             final: dict = {}
             grounding: dict = {}
+            sources: list[dict] = []
 
             async with session_factory()() as read:
                 async for event, payload in stream_answer(
@@ -93,6 +102,10 @@ async def post_message(
                         continue
                     if event == "grounding":
                         grounding = payload
+                    if event == "sources":
+                        # Captured for persistence, not rebuilt: what gets
+                        # stored is byte-for-byte what the client was shown.
+                        sources = payload.get("sources", [])
                     yield sse(event, payload)
 
             content = final.get("content", "").strip()
@@ -103,6 +116,10 @@ async def post_message(
                     write, session_id, role="assistant", content=content,
                     provider=provider.name, model=provider.model,
                     latency_ms=latency,
+                    # Stored so a reopened session still shows what the answer
+                    # was built from -- and still shows a FAILED verdict as a
+                    # retraction instead of quietly replaying clean text.
+                    sources=sources, grounding=grounding or None,
                 )
                 await write.commit()
                 msg_id, a_seq = str(msg.id), msg.seq

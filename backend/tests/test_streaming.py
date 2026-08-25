@@ -76,6 +76,90 @@ async def test_meta_identifies_provider_and_session(client, session_id):
 
 
 # --------------------------------------------------------------------------
+# The SESSION decides the provider -- not LLM_PROVIDER, and not the request
+# --------------------------------------------------------------------------
+async def test_turn_runs_on_the_sessions_provider_not_the_configured_one(client):
+    """A4. LLM_PROVIDER is ollama here; a deepseek session still says deepseek.
+
+    Runs the abstention path, which never invokes the provider -- so this
+    proves provider *selection* without needing a cloud credential.
+    """
+    from app.config import get_settings
+    assert get_settings().llm_provider == "ollama", "test premise"
+
+    sid = (await client.post("/api/sessions", json={"provider": "deepseek"})).json()["id"]
+    meta = (await _stream(client, sid, "hi"))[0][1]
+
+    assert meta["provider"] == "deepseek"
+    assert meta["model"] == get_settings().deepseek_model
+
+
+async def test_sessions_on_different_providers_do_not_contaminate_each_other(client):
+    """Two live sessions, two providers, each turn stamped with its own."""
+    a = (await client.post("/api/sessions", json={"provider": "ollama"})).json()["id"]
+    b = (await client.post("/api/sessions", json={"provider": "deepseek"})).json()["id"]
+
+    assert (await _stream(client, a, "x"))[0][1]["provider"] == "ollama"
+    assert (await _stream(client, b, "x"))[0][1]["provider"] == "deepseek"
+    # And again, to prove the first stream did not rebind anything global.
+    assert (await _stream(client, a, "y"))[0][1]["provider"] == "ollama"
+
+
+async def test_a_failing_provider_is_surfaced_never_substituted(client, monkeypatch):
+    """A6. The single most important provider property.
+
+    A dead provider must end the stream with an error. It must NEVER be
+    quietly swapped for the one that happens to be working -- an answer the
+    user believes came from the model they chose, produced by another model,
+    is a lie the UI cannot detect.
+    """
+    from app import agent as agent_mod
+    from app import providers as providers_mod
+    from app.errors import ProviderUnavailable
+    from app.retrieval import Evidence
+
+    async def _fake_retrieve(db, session_id, question, k):
+        # Evidence exists, so the agent proceeds to generation -- which is
+        # where the provider failure has to happen for this test to mean
+        # anything. With no evidence it would abstain and never call it.
+        return [Evidence(
+            source_id="s", source_title="T", speaker="S",
+            source_url="https://youtu.be/x", transcript_id="t", chunk_id="c",
+            publish_date=None, chunk_index=0, guest="G", text="Some evidence.",
+            start_seconds=0, end_seconds=5, similarity=0.9,
+            citation_url="https://youtu.be/x?t=0",
+        )]
+
+    class DeadRuntime:
+        def __init__(self, settings):
+            pass
+
+        def stream(self, **kwargs):
+            async def gen():
+                raise ProviderUnavailable(
+                    "The selected model provider is not reachable.")
+                yield ""  # pragma: no cover - unreachable, defines a generator
+            return gen()
+
+    monkeypatch.setattr(agent_mod, "retrieve_for_session", _fake_retrieve)
+    monkeypatch.setattr(providers_mod, "PiRuntime", DeadRuntime)
+
+    sid = (await client.post("/api/sessions", json={"provider": "deepseek"})).json()["id"]
+    events = await _stream(client, sid, "How do I improve retention?")
+    kinds = [e for e, _ in events]
+
+    assert kinds[-1] == "error", f"stream did not end in an error: {kinds}"
+    err = events[-1][1]
+    assert err["code"] == "provider_unavailable"
+    assert err["retryable"] is True
+    assert "done" not in kinds, "a failed turn must not also report success"
+
+    # Nothing anywhere in the stream may name the other provider.
+    assert "ollama" not in json.dumps(events), (
+        "the failing provider appears to have been substituted")
+
+
+# --------------------------------------------------------------------------
 # Abstention -- an empty index must refuse, not improvise
 # --------------------------------------------------------------------------
 async def test_empty_index_abstains_and_says_so(client, session_id):

@@ -18,6 +18,66 @@ async def test_create_session_records_provider_and_model(client):
     uuid.UUID(body["id"])
 
 
+# --------------------------------------------------------------------------
+# Provider selection is per session, made at creation, and immutable.
+# --------------------------------------------------------------------------
+async def test_session_can_select_a_provider_other_than_the_default(client):
+    """A1. LLM_PROVIDER is ollama in the test environment; the body wins."""
+    r = await client.post("/api/sessions", json={"provider": "deepseek"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["provider"] == "deepseek"
+    # The model is the one that provider uses, not the default provider's.
+    from app.config import get_settings
+    assert body["model"] == get_settings().deepseek_model
+
+
+async def test_unknown_provider_is_422_not_500(client):
+    """A2. A typo in a request body is the caller's error, not a broken deploy."""
+    r = await client.post("/api/sessions", json={"provider": "nope"})
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    # The message names what is actually available rather than just refusing.
+    assert "ollama" in err["message"]
+
+
+async def test_omitted_provider_falls_back_to_configuration(client):
+    """A3. Unchanged behaviour for every existing caller."""
+    from app.config import get_settings
+    r = await client.post("/api/sessions", json={})
+    assert r.status_code == 201
+    assert r.json()["provider"] == get_settings().llm_provider
+
+
+async def test_message_body_cannot_carry_a_provider(client, session_id):
+    """A5. Provider is a property of the session; a turn may not override it.
+
+    Structural, not incidental: MessageCreate has exactly one field, so a
+    per-message override cannot be smuggled in by a client.
+    """
+    from app.schemas import MessageCreate
+    assert set(MessageCreate.model_fields) == {"content"}
+
+    # And an attempt to send one is ignored rather than honoured.
+    async with client.stream(
+        "POST", f"/api/sessions/{session_id}/messages",
+        json={"content": "hi", "provider": "deepseek"},
+    ) as r:
+        assert r.status_code == 200
+        raw = "".join([chunk async for chunk in r.aiter_text()])
+    assert '"provider": "ollama"' in raw or '"provider":"ollama"' in raw
+    assert "deepseek" not in raw
+
+
+async def test_no_route_mutates_an_existing_sessions_provider(client, session_id):
+    """A5. There is no PATCH/PUT on a session. Switching means a new session."""
+    for method in ("PATCH", "PUT"):
+        r = await client.request(
+            method, f"/api/sessions/{session_id}", json={"provider": "deepseek"})
+        assert r.status_code == 405, f"{method} must not be routable"
+
+
 async def test_get_unknown_session_is_structured_404(client):
     r = await client.get(f"/api/sessions/{uuid.uuid4()}")
     assert r.status_code == 404
