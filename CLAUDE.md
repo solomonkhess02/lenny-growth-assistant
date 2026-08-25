@@ -248,6 +248,11 @@ Sessions must maintain **independent context** and must not leak context across 
   very file, 16% of the context budget, invisible unless you count tokens.
 - **Pi exits 0 on failure.** Unreachable endpoints, bad model ids and rejected credentials all
   return 0; `message.stopReason == "error"` is the only reliable signal.
+- **Pi's JSON-lines outgrow asyncio's default 64 KiB line limit.** `turn_end`/`agent_end` echo
+  the whole conversation *including thinking content*, so they scale with the generation —
+  measured at 55,027 bytes on a real essay. The default silently killed finished essays, so
+  `pi_runtime` pins `limit=_STDOUT_LINE_LIMIT` (16 MiB) and skips-and-logs past it rather than
+  letting the `ValueError` escape. Do not drop that `limit=` argument.
 - **Pi always runs `--no-tools`.** Retrieval is deterministic application code; the agent needs
   no tool surface, and read/write/edit/bash in a web backend is a live liability.
 - **`docker compose --profile test run` does NOT rebuild.** It served a cached pre-Phase-5 image

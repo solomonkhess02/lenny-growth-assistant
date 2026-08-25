@@ -49,6 +49,28 @@ log = logging.getLogger("app.pi")
 
 _TEXT_DELTA = "text_delta"
 
+# Maximum bytes in ONE Pi JSON-lines event.
+#
+# asyncio.StreamReader defaults to 64 KiB per line and raises LimitOverrunError
+# -> ValueError past it. Pi's terminal events (`turn_end`, `agent_end`) echo the
+# whole conversation INCLUDING thinking content, so they scale with the
+# generation rather than staying small. Measured in-container on a real Ship 30
+# prompt (2026-08-25):
+#
+#     agent_end                     55,027 bytes
+#     turn_end                      45,909 bytes
+#     message_update/thinking_end   38,518 bytes   (8,656 thinking deltas)
+#
+# That run survived at 84% of the default limit. Three of six DeepSeek essay
+# runs did not: the ValueError propagated out of the generator, and a COMPLETE
+# essay was discarded after two to four minutes of generation while the reader
+# saw `internal_error`. See docs/ship30-essays.md 10.5.
+#
+# 16 MiB is ~300x the largest event measured. It is a ceiling on one line, not
+# a preallocation, and it does not change what is parsed -- only whether the
+# reader refuses to parse it.
+_STDOUT_LINE_LIMIT = 16 * 1024 * 1024
+
 
 def classify_event(event: dict) -> tuple[str, str] | None:
     """Interpret one Pi JSON event.
@@ -250,6 +272,7 @@ class PiRuntime:
             raise
         t0 = time.perf_counter()
         emitted = 0
+        oversized = 0
         failure: Exception | None = None
 
         try:
@@ -259,6 +282,9 @@ class PiRuntime:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(workdir),
                 env=self.child_env(pi_provider),
+                # Not the 64 KiB default: Pi's terminal events carry the whole
+                # conversation. See _STDOUT_LINE_LIMIT.
+                limit=_STDOUT_LINE_LIMIT,
             )
         except FileNotFoundError as exc:
             for f in scratch:
@@ -269,7 +295,28 @@ class PiRuntime:
 
         try:
             assert proc.stdout is not None
-            async for raw in proc.stdout:
+            while True:
+                try:
+                    raw = await proc.stdout.readline()
+                except ValueError:
+                    # One event past _STDOUT_LINE_LIMIT. asyncio has already
+                    # dropped it from the buffer, so the stream stays usable and
+                    # the remaining events still arrive.
+                    #
+                    # Skipping beats propagating: letting this escape is what
+                    # discarded finished essays. It is logged loudly rather than
+                    # swallowed, and counted into the turn's log line, because a
+                    # skipped terminal event could in principle have carried a
+                    # stopReason -- and a silent skip would be exactly the kind
+                    # of hidden failure this module exists to prevent.
+                    oversized += 1
+                    log.warning("pi_oversized_event", extra={
+                        "pi_provider": pi_provider, "model": model,
+                        "limit_bytes": _STDOUT_LINE_LIMIT,
+                        "deltas_so_far": emitted, "outcome": "degraded"})
+                    continue
+                if not raw:
+                    break
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line.startswith("{"):
                     continue
@@ -305,6 +352,7 @@ class PiRuntime:
             log.info("pi_turn_finished", extra={
                 "framework": "pi", "pi_provider": pi_provider, "model": model,
                 "deltas": emitted,
+                "oversized_events": oversized,
                 "system_prompt_override": system_prompt is not None,
                 "append_system_prompt": append_system_prompt is not None,
                 "duration_ms": round((time.perf_counter() - t0) * 1000, 1),
@@ -318,6 +366,13 @@ class PiRuntime:
             # A silent empty turn is indistinguishable from success downstream,
             # so it is treated as a failure rather than an empty answer.
             detail = stderr.decode("utf-8", errors="replace")[:200] if stderr else ""
+            if oversized:
+                # "No output" would send an operator looking for a dead
+                # provider. Pi DID answer; the transport could not read it.
+                raise ProviderUnavailable(
+                    f"Pi produced {oversized} event(s) larger than the "
+                    f"{_STDOUT_LINE_LIMIT} byte line limit for provider "
+                    f"'{pi_provider}', and no readable output.")
             raise ProviderUnavailable(
                 f"Pi produced no output for provider '{pi_provider}'."
                 + (f" stderr: {detail}" if detail else ""))

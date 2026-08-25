@@ -7,7 +7,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 - **Status key:** ✅ met with evidence · 🟡 partially met · ❌ measured and not met · ⬜ not started (phase not reached)
 - Test names are runnable: `cd backend && python -m pytest -k <name>`
-- Current suite: **326 passed, 0 failed, 0 skipped** on the host; **324 passed, 2 skipped** in the runtime image (2026-08-25, Phase 6). The 2 container skips are the packaging tests, which read `Dockerfile` / `.dockerignore` — files deliberately absent from the image.
+- Current suite: **332 passed, 0 failed, 0 skipped** on the host; **324 passed, 2 skipped** in the runtime image (2026-08-25, Phase 6). The 2 container skips are the packaging tests, which read `Dockerfile` / `.dockerignore` — files deliberately absent from the image.
 
 ---
 
@@ -71,6 +71,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 | Corrupt/zero-turn transcript | Fails loudly, names the file, writes nothing | `test_zero_turn_transcript_fails_loudly_and_writes_nothing` | ✅ |
 | Corpus integrity mismatch | sha256 refused | `test_integrity_mismatch_is_refused` | ✅ |
 | Model timeout | Surfaced, logged, recoverable | — | ⬜ Phase 8 |
+| Oversized agent event | Finished generation is not discarded; failure is visible | `tests/test_pi_runtime.py` (6 oversized-event tests). 16 MiB line limit + skip-and-log past it; in-container DeepSeek 2 essays/3 crashes → **6 essays/0 crashes** | ✅ |
 
 ## §6 Deliverables
 
@@ -168,9 +169,21 @@ over the real HTTP path against the container. **No threshold changed; `groundin
 | **Ollama** `qwen3:4b-instruct` | 6 | 6 | **0** | **6** | **16 / 72** | **22.2%** |
 | **DeepSeek** `deepseek-v4-pro` | 6 | 2 | 2 | 0 | 0 / **0 quotes** | n/a |
 
-The DeepSeek row is not a quality ranking: 3 of 6 runs discarded a *complete* essay to the
-64 KiB stream defect (gap 17), 1 had its short answer fail first, and **both passes contained no
-verifiable quotation at all**. Meanwhile every Ollama short answer PASSed (6/6) while every
+**The DeepSeek row above is superseded — it was distorted by gap 17.** 3 of 6 runs discarded a
+*complete* essay to the 64 KiB stream defect, and because event size scales with generation
+length, the bug systematically filtered out the *richer* essays. Re-run after the transport fix:
+
+| DeepSeek `deepseek-v4-pro` | attempts | produced | crashes | PASS | fabricated / checked |
+|---|---:|---:|---:|---:|---:|
+| before the fix | 6 | 2 | **3** | 2 | 0 / **0 quotes** |
+| **after the fix** | 6 | **6** | **0** | **6** | **0 / 82 quotes** |
+
+So DeepSeek is genuinely reliable here, not vacuously reliable. **The Ollama findings are
+unaffected** — it produced 6/6 with 0 crashes both before and after, because `qwen3:4b-instruct`
+emits no thinking content and its events never approached the limit. See
+[ship30-essays.md §11.3](ship30-essays.md).
+
+Meanwhile every Ollama short answer PASSed (6/6) while every
 Ollama essay FAILed (6/6) on the same evidence and verifier — the failure is specific to essay
 length. Of 16 fabricated spans, 14 were wholly invented and 2 altered; **0 came from the prior
 answer and 0 crossed a speaker label**, ruling out two implementation hypotheses by measurement.
@@ -316,7 +329,18 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
     added to `frontend/package.json`, per the Phase 5 constraint.
 
 
-17. **Pi's JSON-lines exceed asyncio's 64 KiB line limit, killing finished essays.**
+17. ~~**Pi's JSON-lines exceed asyncio's 64 KiB line limit, killing finished essays.**~~
+    **RESOLVED (2026-08-25).** `pi_runtime` now passes an explicit
+    `limit=_STDOUT_LINE_LIMIT` (16 MiB, ~300× the largest event measured) and reads with an
+    explicit `readline()` loop, so an event past even that ceiling is logged, counted
+    (`oversized_events`) and skipped rather than escaping the generator. Protocol, error taxonomy,
+    streaming and cleanup unchanged. 6 regression tests in `tests/test_pi_runtime.py`, all of
+    which fail against the pre-fix module with the production exception
+    (`LimitOverrunError` → `ValueError`). Verified in-container on the path that failed: the same
+    DeepSeek matrix went **2 essays / 3 crashes → 6 essays / 0 crashes**. Original diagnosis
+    below.
+
+    **Pi's JSON-lines exceed asyncio's 64 KiB line limit, killing finished essays.**
     `pi_runtime.stream()` iterates `proc.stdout`; `asyncio.StreamReader` caps one line at 64 KiB
     and raises `LimitOverrunError` → `ValueError` past it. Pi's `turn_end`/`agent_end` echo the
     whole conversation **including thinking content** — measured in-container at `agent_end`

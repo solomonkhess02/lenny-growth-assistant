@@ -381,8 +381,9 @@ stream, and a complete essay discarded after two to four minutes of
 generation. It is **pre-existing since Phase 4**, not a Phase 6 regression, and
 it is why `deepseek_disable_thinking` being unwired (gap 13) has a cost.
 
-Not fixed here: it is neither a prompt change nor a layout change, and it
-deserves its own change with its own tests. Recorded as a known gap.
+**FIXED 2026-08-25** — see §11. It was deferred out of the investigation
+commit because it is neither a prompt change nor a layout change, then fixed on
+its own with its own regression tests.
 
 ### 10.6 Mitigation attempted, and its measured result
 
@@ -442,3 +443,63 @@ on this same task) and it is why retraction is a first-class screen.
   a demo.
 - Fix the 64 KiB stream limit (§10.5) before the DeepSeek essay path can be
   called reliable; today it discards roughly a third of completed essays.
+
+---
+
+## 11. The transport fix, and what it corrected in §10
+
+The 64 KiB defect from §10.5 was fixed after the investigation, as its own
+change. It turned out to have **biased the §10.2 DeepSeek measurements**, so
+this section corrects them.
+
+### 11.1 The fix
+
+`pi_runtime.stream()` now passes an explicit `limit` to
+`create_subprocess_exec` (`_STDOUT_LINE_LIMIT`, 16 MiB — about 300× the largest
+event ever measured, 55,027 bytes) and reads with an explicit `readline()` loop
+instead of `async for`, so an event past even that ceiling is **logged, counted
+and skipped** rather than propagating out of the generator. asyncio drops the
+offending line from its own buffer, so events after it still arrive.
+
+Unchanged: the event protocol, `classify_event`, the error taxonomy, the
+streaming contract, the scratch-file cleanup, `grounding.py`, prompts and
+retrieval. The turn's log line gains `oversized_events`. A turn where
+*everything* was unreadable now says so, instead of reporting "no output" and
+sending an operator to look for a dead provider.
+
+### 11.2 Verified on the path that used to fail
+
+The same DeepSeek matrix from §10.2, re-run in the container:
+
+| | attempts | essays produced | stream crashes | PASS | fabricated / checked |
+|---|---:|---:|---:|---:|---:|
+| before the fix | 6 | 2 | **3** | 2 | 0 / **0** |
+| after the fix | 6 | **6** | **0** | **6** | **0 / 82** |
+
+### 11.3 The correction
+
+§10.2 concluded that *"DeepSeek passed by not quoting"*, on the evidence that
+both of its surviving essays had `quotes_found: 0`. **That conclusion was an
+artefact of the defect.** Event size scales with generation length and thinking
+content, so the runs that crashed were systematically the *richer* ones — the
+bug was silently filtering the sample down to the shortest, least quotational
+essays.
+
+With the transport fixed, DeepSeek checks **82 quotations across 6 essays and
+fabricates none** (15, 35, 14, 13, 0, 5 per essay). One essay still used no
+quotations; the other five did, and verified clean. DeepSeek is genuinely
+reliable on this task, not vacuously reliable.
+
+**What does not change:** the Ollama findings in §10.2–§10.7. Ollama produced
+6 of 6 essays with zero crashes both before and after — its events never
+approached the limit, because `qwen3:4b-instruct` emits no thinking content.
+Its 0-of-12 pass rate, the 22.2% fabrication rate, the classification of all 16
+spans, and the reverted mitigation all stand exactly as measured. **The H4
+conclusion is unaffected.**
+
+### 11.4 Recommendation, updated
+
+§10.8 stands, with one strengthening: the DeepSeek demo path is now known to
+produce **quote-rich, verifiably clean** essays rather than quote-free ones, so
+"demonstrate a successful Ship 30 essay on DeepSeek" no longer needs the
+caveat that its passes may contain no quotations.

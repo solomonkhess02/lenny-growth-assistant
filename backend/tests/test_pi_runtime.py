@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -519,3 +520,181 @@ class TestPromptFileDelivery:
 
         leftover = set(workdir.iterdir()) - before
         assert not leftover, f"scratch prompt files were left behind: {leftover}"
+
+
+# --------------------------------------------------------------------------
+# Oversized JSON-lines events (the 64 KiB transport defect)
+#
+# asyncio.StreamReader defaults to 64 KiB per line. Pi's terminal events
+# (turn_end, agent_end) echo the whole conversation INCLUDING thinking content,
+# so they grow with the generation: agent_end was measured at 55,027 bytes on a
+# real Ship 30 prompt, and three of six DeepSeek essay runs exceeded the limit
+# outright. The ValueError escaped the generator, so a COMPLETE essay was
+# thrown away after minutes of generation and the reader saw internal_error.
+#
+# These tests drive the reader with a stub CLI rather than a live model: the
+# defect is in how stdout is consumed, and that is reproducible deterministically
+# and offline.
+# --------------------------------------------------------------------------
+import sys
+
+
+def _stub_cli(tmp_path: Path, lines: list[str]) -> list[str]:
+    """A command that prints the given stdout lines and exits 0.
+
+    Stands in for the Pi CLI. Pi's own exit code is meaningless (it exits 0 on
+    failure), so nothing here depends on it.
+    """
+    script = tmp_path / "stub_pi.py"
+    payload = json.dumps(lines)
+    script.write_text(
+        "import sys, json\n"
+        f"for line in json.loads({payload!r}):\n"
+        "    sys.stdout.write(line + '\\n')\n"
+        "sys.stdout.flush()\n",
+        encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def _delta(text: str) -> str:
+    return json.dumps({
+        "type": "message_update",
+        "assistantMessageEvent": {"type": "text_delta", "delta": text},
+    })
+
+
+def _huge_terminal_event(min_bytes: int, *, stop_reason: str | None = None) -> str:
+    """One Pi terminal event padded past `min_bytes`, as thinking content does."""
+    message: dict = {"content": [{"type": "thinking", "thinking": "x" * min_bytes}]}
+    if stop_reason:
+        message["stopReason"] = stop_reason
+        message["errorMessage"] = "model not found: definitely-not-a-model"
+    line = json.dumps({"type": "turn_end", "message": message})
+    assert len(line.encode()) > min_bytes
+    return line
+
+
+async def test_an_event_larger_than_64_kib_does_not_kill_the_stream(
+        runtime, tmp_path, monkeypatch):
+    """The regression. 100 KiB in one line used to raise ValueError.
+
+    The deltas here arrive BEFORE the oversized terminal event, exactly as a
+    finished essay's text does -- which is what made the old behaviour so
+    expensive: the content was already complete when the read threw it away.
+    """
+    lines = [_delta("Ship 30 essay, "), _delta("complete."),
+             _huge_terminal_event(100 * 1024)]
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _stub_cli(tmp_path, lines))
+
+    parts = [d async for d in runtime.stream(
+        pi_provider="ollama", model="m", prompt="p")]
+
+    assert parts == ["Ship 30 essay, ", "complete."]
+
+
+async def test_an_oversized_event_is_parsed_not_skipped(
+        runtime, tmp_path, monkeypatch):
+    """Raising the limit must PARSE the big line, not discard it.
+
+    A skipped terminal event would lose `stopReason: "error"` -- the only
+    reliable failure signal Pi gives us -- and a failed turn would be reported
+    as a successful one. So the signal is put inside the oversized line itself.
+    """
+    lines = [_delta("partial"),
+             _huge_terminal_event(100 * 1024, stop_reason="error")]
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _stub_cli(tmp_path, lines))
+
+    with pytest.raises(ProviderUnavailable) as exc:
+        async for _ in runtime.stream(pi_provider="ollama", model="m",
+                                      prompt="p"):
+            pass
+    assert "not available" in exc.value.message.lower()
+
+
+async def test_an_event_past_even_the_raised_limit_degrades_visibly(
+        runtime, tmp_path, monkeypatch, caplog):
+    """Past the ceiling the turn degrades; it never throws away the stream.
+
+    asyncio drops the offending line from its buffer, so events after it still
+    arrive. The skip is logged and counted rather than swallowed, because a
+    silent skip is the failure mode this module exists to prevent.
+    """
+    import app.pi_runtime as pi_mod
+    monkeypatch.setattr(pi_mod, "_STDOUT_LINE_LIMIT", 8 * 1024)
+
+    lines = [_delta("before "), _huge_terminal_event(64 * 1024),
+             _delta("after")]
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _stub_cli(tmp_path, lines))
+
+    with caplog.at_level(logging.WARNING, logger="app.pi"):
+        parts = [d async for d in runtime.stream(
+            pi_provider="ollama", model="m", prompt="p")]
+
+    assert parts == ["before ", "after"], "events after the oversized one were lost"
+    assert any(r.message == "pi_oversized_event" for r in caplog.records), \
+        "an oversized event was skipped without a warning"
+
+
+async def test_scratch_files_are_cleaned_up_on_the_oversized_path(
+        runtime, tmp_path, monkeypatch):
+    """S3 still holds when a line blows the limit.
+
+    The prompt, system and append files each hold the full evidence block, so
+    leaving them behind in a shared temp directory is a disclosure leak, not
+    untidiness.
+    """
+    import app.pi_runtime as pi_mod
+    monkeypatch.setattr(pi_mod, "_STDOUT_LINE_LIMIT", 8 * 1024)
+
+    workdir = runtime.workdir()
+    before = set(workdir.iterdir())
+
+    lines = [_delta("x"), _huge_terminal_event(64 * 1024)]
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _stub_cli(tmp_path, lines))
+
+    async for _ in runtime.stream(pi_provider="ollama", model="m", prompt="p",
+                                  system_prompt="RULES",
+                                  append_system_prompt="SKILL"):
+        pass
+
+    leftover = set(workdir.iterdir()) - before
+    assert not leftover, f"scratch files left behind: {leftover}"
+
+
+def test_the_line_limit_is_far_above_what_pi_actually_emits():
+    """The ceiling is justified by measurement, not by taste.
+
+    Largest event measured in-container on a real Ship 30 prompt was
+    agent_end at 55,027 bytes, already 84% of the old 64 KiB default.
+    """
+    from app.pi_runtime import _STDOUT_LINE_LIMIT
+    largest_measured = 55_027
+    assert _STDOUT_LINE_LIMIT > 65_536, "still at or below the default that broke"
+    assert _STDOUT_LINE_LIMIT >= largest_measured * 100, \
+        "too little headroom over the largest event actually observed"
+
+
+async def test_an_entirely_unreadable_turn_says_so_not_no_output(
+        runtime, tmp_path, monkeypatch):
+    """"No output" would send an operator hunting a dead provider.
+
+    Pi answered; the transport could not read it. Those are different faults
+    with different fixes, so they get different messages.
+    """
+    import app.pi_runtime as pi_mod
+    monkeypatch.setattr(pi_mod, "_STDOUT_LINE_LIMIT", 8 * 1024)
+
+    lines = [_huge_terminal_event(64 * 1024)]
+    monkeypatch.setattr(runtime, "build_command",
+                        lambda **kw: _stub_cli(tmp_path, lines))
+
+    with pytest.raises(ProviderUnavailable) as exc:
+        async for _ in runtime.stream(pi_provider="ollama", model="m",
+                                      prompt="p"):
+            pass
+    assert "larger than" in exc.value.message
+    assert "no output" not in exc.value.message.lower()
