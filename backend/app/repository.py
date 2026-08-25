@@ -26,7 +26,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .errors import NotFoundError
-from .models import Message, Session
+from .models import Essay, Message, Session
 
 log = logging.getLogger("app.repository")
 
@@ -122,3 +122,53 @@ async def append_message(
     db.add(msg)
     await db.flush()
     return msg
+
+
+# ---------------------------------------------------------------------------
+# Essays (Phase 6). Separate from messages by design -- see models.Essay.
+# ---------------------------------------------------------------------------
+async def create_essay(
+    db: AsyncSession, session_id: uuid.UUID, *, source_message_id: uuid.UUID | None,
+    title: str | None, markdown: str, word_count: int,
+    provider: str, model: str, latency_ms: int | None,
+    sources: list[dict], grounding: dict | None,
+    skill_name: str, skill_sha256: str, fmt: str = "markdown",
+) -> Essay:
+    """Store one generated essay.
+
+    No sequence allocation and therefore no row lock: essays have no ordering
+    constraint within a session, so the concurrency hazard that `append_message`
+    exists to close does not arise here. Ordering for display comes from
+    `created_at`, which is what the ix_essays_session_created index serves.
+    """
+    obj = Essay(
+        session_id=session_id, source_message_id=source_message_id,
+        title=title, markdown=markdown, format=fmt, word_count=word_count,
+        provider=provider, model=model, latency_ms=latency_ms,
+        sources=sources or [], grounding=grounding,
+        skill_name=skill_name, skill_sha256=skill_sha256,
+    )
+    db.add(obj)
+    await db.flush()
+    log.info("essay_created", extra={
+        "session_id": str(session_id), "essay_id": str(obj.id),
+        "provider": provider, "model": model, "word_count": word_count,
+        "skill": skill_name})
+    return obj
+
+
+async def list_essays(db: AsyncSession, session_id: uuid.UUID) -> list[Essay]:
+    """Session-scoped by construction, like list_messages. No unscoped variant."""
+    rows = await db.scalars(
+        select(Essay)
+        .where(Essay.session_id == session_id)
+        .order_by(Essay.created_at.desc())
+    )
+    return list(rows)
+
+
+async def load_essay(db: AsyncSession, essay_id: uuid.UUID) -> Essay:
+    obj = await db.get(Essay, essay_id)
+    if obj is None:
+        raise NotFoundError(f"Essay {essay_id} does not exist.")
+    return obj

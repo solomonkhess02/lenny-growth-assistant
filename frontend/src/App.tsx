@@ -23,6 +23,7 @@ import Message from "./components/Message";
 import NewSessionControl from "./components/NewSessionControl";
 import SessionList from "./components/SessionList";
 import { useChat } from "./useChat";
+import { useEssay } from "./useEssay";
 import type { Health, ProviderHealth, SessionSummary } from "./types";
 
 export default function App() {
@@ -36,6 +37,9 @@ export default function App() {
   const [activeHealth, setActiveHealth] = useState<ProviderHealth | null>(null);
 
   const { turns, busy, loadError, send, retry } = useChat(activeId);
+  const {
+    essay, history: essays, busy: essayBusy, generate, show: showEssay,
+  } = useEssay(activeId);
   const active = sessions.find((s) => s.id === activeId) ?? null;
 
   const refreshHealth = useCallback(async () => {
@@ -89,6 +93,28 @@ export default function App() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns]);
+
+  // An essay that takes minutes must not be generating behind a collapsed
+  // pane -- the reader would have no way to tell it from nothing happening.
+  const writeEssay = useCallback(
+    (messageId: string) => {
+      setArtifactOpen(true);
+      void generate(messageId);
+    },
+    [generate],
+  );
+
+  /**
+   * Is this turn eligible to become an essay?
+   *
+   * Verified clean, cites evidence, finished, and persisted. The server
+   * re-checks every one of these -- this only decides whether to offer it.
+   */
+  const canWriteEssay = (t: (typeof turns)[number]) =>
+    t.role === "assistant" &&
+    t.state === "done" &&
+    t.sources.length > 0 &&
+    Boolean(t.id);
 
   const startSession = useCallback(
     async (provider: string) => {
@@ -204,6 +230,11 @@ export default function App() {
                 key={i}
                 turn={t}
                 onRetry={i === turns.length - 1 && !busy ? retry : undefined}
+                onWriteEssay={
+                  canWriteEssay(t) ? () => writeEssay(t.id as string) : undefined
+                }
+                essayBusy={essayBusy}
+                localProvider={active?.provider === "ollama"}
               />
             ))}
             <div ref={endRef} />
@@ -211,7 +242,13 @@ export default function App() {
           <Composer onSend={send} busy={busy} disabled={!activeId} />
         </section>
 
-        <ArtifactPane open={artifactOpen} onToggle={() => setArtifactOpen((v) => !v)} />
+        <ArtifactPane
+          open={artifactOpen}
+          onToggle={() => setArtifactOpen((v) => !v)}
+          essay={essay}
+          history={essays}
+          onShow={showEssay}
+        />
       </main>
     </div>
   );

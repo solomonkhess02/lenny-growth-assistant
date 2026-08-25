@@ -430,3 +430,92 @@ def test_successful_turn_is_not_misread_as_an_error():
     from app.pi_runtime import classify_event
     assert classify_event({"type": "turn_end",
                            "message": {"stopReason": "stop"}}) is None
+
+
+# --------------------------------------------------------------------------
+# Phase 6: prompt files, and the skill discovery we deliberately refuse
+# --------------------------------------------------------------------------
+class TestPromptFileDelivery:
+    """How the Ship 30 instructions reach Pi, and why not via `--skill`.
+
+    Pi's skill loader is progressive-disclosure: only a skill's name and
+    description enter the system prompt, and the body arrives when the model
+    calls `read`. We run --no-tools, so that body would never arrive. The
+    instructions are passed as prompt FILES instead, which is deterministic and
+    needs no tool surface.
+    """
+
+    def _runtime(self):
+        from app.config import get_settings
+        from app.pi_runtime import PiRuntime
+        return PiRuntime(get_settings())
+
+    def test_skill_discovery_is_always_disabled(self):
+        """Global skill dirs (~/.pi/agent/skills, ~/.agents/skills) are found
+        regardless of our controlled working directory, so the workdir fix does
+        not cover them. An unrelated skill on the host must not be able to
+        enter a grounded generation."""
+        cmd = self._runtime().build_command(
+            pi_provider="ollama", model="m", prompt_ref="@p.txt")
+        assert "--no-skills" in cmd
+
+    def test_tools_stay_disabled_when_prompts_are_passed(self):
+        """The Phase 6 flags must not have loosened the Phase 4 guarantees."""
+        from pathlib import Path
+        cmd = self._runtime().build_command(
+            pi_provider="ollama", model="m", prompt_ref="@p.txt",
+            system_prompt_file=Path("/tmp/s.txt"),
+            append_system_prompt_file=Path("/tmp/a.txt"))
+        assert "--no-tools" in cmd
+        assert "--no-prompt-templates" in cmd
+        assert "--no-skills" in cmd
+
+    def test_prompt_flags_are_absent_on_the_chat_path(self):
+        """Answers must call Pi exactly as they always did."""
+        cmd = self._runtime().build_command(
+            pi_provider="ollama", model="m", prompt_ref="@p.txt")
+        assert "--system-prompt" not in cmd
+        assert "--append-system-prompt" not in cmd
+
+    def test_prompt_content_never_reaches_the_command_line(self):
+        """S4. Files, not argv.
+
+        A multi-line prompt on a command line is mangled by Windows quoting and
+        can exceed the argv limit -- and anything on argv is visible in a
+        process listing.
+        """
+        from pathlib import Path
+        cmd = self._runtime().build_command(
+            pi_provider="ollama", model="m", prompt_ref="@p.txt",
+            system_prompt_file=Path("/tmp/system-abc.txt"),
+            append_system_prompt_file=Path("/tmp/append-abc.txt"))
+        joined = " ".join(cmd)
+        assert "ONLY the provided evidence" not in joined
+        assert "Ship 30" not in joined
+
+    async def test_prompt_files_are_written_in_the_workdir_and_cleaned_up(self):
+        """S3. Written where nothing else can read them, gone afterwards.
+
+        Pi treats a non-existent --system-prompt path as literal prompt TEXT,
+        so these files existing at spawn time is load-bearing, not hygiene.
+        """
+        from app.errors import ProviderMisconfigured, ProviderUnavailable
+
+        runtime = self._runtime()
+        workdir = runtime.workdir()
+        before = set(workdir.iterdir())
+
+        # A bogus CLI makes the spawn fail immediately; the cleanup path is
+        # what is under test, not the generation.
+        runtime.settings = runtime.settings.model_copy(
+            update={"pi_cli_path": "definitely-not-a-real-cli-xyz"})
+        try:
+            async for _ in runtime.stream(
+                    pi_provider="ollama", model="m", prompt="hello",
+                    system_prompt="RULES", append_system_prompt="SKILL"):
+                pass
+        except (ProviderMisconfigured, ProviderUnavailable):
+            pass
+
+        leftover = set(workdir.iterdir()) - before
+        assert not leftover, f"scratch prompt files were left behind: {leftover}"

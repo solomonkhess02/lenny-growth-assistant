@@ -138,14 +138,17 @@ class PiRuntime:
 
     # -- execution ---------------------------------------------------------
     def build_command(self, *, pi_provider: str, model: str,
-                      prompt_ref: str) -> list[str]:
+                      prompt_ref: str,
+                      system_prompt_file: Path | None = None,
+                      append_system_prompt_file: Path | None = None
+                      ) -> list[str]:
         cli = self.cli_path
         if cli is None:
             raise ProviderMisconfigured(
                 f"Pi CLI not found (looked for '{self.settings.pi_cli_path}'). "
                 f"Install it with: npm install -g @earendil-works/pi-coding-agent"
             )
-        return [
+        cmd = [
             cli, "-p", "--mode", "json",
             "--provider", pi_provider,
             "--model", model,
@@ -154,15 +157,44 @@ class PiRuntime:
             # Prompt templates are discovered from disk; keep the runtime
             # deterministic and free of ambient configuration.
             "--no-prompt-templates",
-            prompt_ref,
+            # Skills are discovered from ~/.pi/agent/skills, ~/.agents/skills
+            # and project directories, and those GLOBAL locations are found
+            # regardless of our controlled working directory. We never rely on
+            # Pi's skill discovery: it is progressive-disclosure, so a skill's
+            # body only reaches the model through the `read` tool, which
+            # --no-tools removes. Disabling it keeps an unrelated skill on the
+            # host from silently entering a grounded generation.
+            "--no-skills",
         ]
+        # Prompt content is passed as FILES, never as argv. A multi-line
+        # prompt on a command line is mangled by Windows quoting and can blow
+        # the argv limit; Pi reads either flag's argument as a file when the
+        # path exists (resolve-prompt-input), and otherwise treats it as
+        # literal text -- so a wrong path would silently become the prompt.
+        # These paths always exist because stream() has just written them.
+        if system_prompt_file is not None:
+            cmd += ["--system-prompt", str(system_prompt_file)]
+        if append_system_prompt_file is not None:
+            cmd += ["--append-system-prompt", str(append_system_prompt_file)]
 
-    async def stream(self, *, pi_provider: str, model: str,
-                     prompt: str) -> AsyncIterator[str]:
+        cmd.append(prompt_ref)
+        return cmd
+
+    async def stream(self, *, pi_provider: str, model: str, prompt: str,
+                     system_prompt: str | None = None,
+                     append_system_prompt: str | None = None
+                     ) -> AsyncIterator[str]:
         """Yield text deltas from one Pi turn.
 
         Raises ProviderUnavailable / ProviderMisconfigured on failure; never
         returns a partial answer as if it had succeeded.
+
+        `system_prompt` REPLACES Pi's default coding-assistant prompt and
+        `append_system_prompt` is added after it. Both are written to files in
+        the controlled working directory and referenced by absolute path,
+        which is what keeps their content off the command line and out of any
+        process listing. Passing `system_prompt` also overrides Pi's discovery
+        of an ambient `~/.pi/agent/SYSTEM.md`.
         """
         # Fail before spawning anything. A missing credential is not fixed by
         # starting a Node process and waiting for a remote 401, and the
@@ -177,11 +209,45 @@ class PiRuntime:
         # rather than passed as an argv string: a multi-line evidence block on
         # a command line is mangled by shell quoting on Windows, and a large
         # prompt can exceed argv limits.
-        prompt_file = workdir / f"prompt-{uuid.uuid4().hex}.txt"
-        prompt_file.write_text(prompt, encoding="utf-8")
+        # Everything from the first write to the spawn is guarded, because a
+        # failure in between used to strand these files permanently:
+        # build_command raises ProviderMisconfigured when the Pi CLI is
+        # missing, and that happened BEFORE any cleanup existed. Each stranded
+        # file holds the full evidence block, so this is a disclosure leak in a
+        # shared temp directory, not just untidiness.
+        scratch: list[Path] = []
+        try:
+            # The prompt is written to a file and referenced with Pi's `@`
+            # syntax rather than passed as an argv string: a multi-line
+            # evidence block on a command line is mangled by shell quoting on
+            # Windows, and a large prompt can exceed argv limits.
+            prompt_file = workdir / f"prompt-{uuid.uuid4().hex}.txt"
+            prompt_file.write_text(prompt, encoding="utf-8")
+            scratch.append(prompt_file)
 
-        cmd = self.build_command(pi_provider=pi_provider, model=model,
-                                 prompt_ref=f"@{prompt_file.name}")
+            # Written alongside it and cleaned up with it. Absolute paths,
+            # because Pi resolves a relative one against its own cwd.
+            sys_file = append_file = None
+            if system_prompt is not None:
+                sys_file = workdir / f"system-{uuid.uuid4().hex}.txt"
+                sys_file.write_text(system_prompt, encoding="utf-8")
+                scratch.append(sys_file)
+            if append_system_prompt is not None:
+                append_file = workdir / f"append-{uuid.uuid4().hex}.txt"
+                append_file.write_text(append_system_prompt, encoding="utf-8")
+                scratch.append(append_file)
+
+            cmd = self.build_command(
+                pi_provider=pi_provider, model=model,
+                prompt_ref=f"@{prompt_file.name}",
+                system_prompt_file=sys_file.resolve() if sys_file else None,
+                append_system_prompt_file=(
+                    append_file.resolve() if append_file else None),
+            )
+        except BaseException:
+            for f in scratch:
+                f.unlink(missing_ok=True)
+            raise
         t0 = time.perf_counter()
         emitted = 0
         failure: Exception | None = None
@@ -195,7 +261,8 @@ class PiRuntime:
                 env=self.child_env(pi_provider),
             )
         except FileNotFoundError as exc:
-            prompt_file.unlink(missing_ok=True)
+            for f in scratch:
+                f.unlink(missing_ok=True)
             raise ProviderMisconfigured(
                 f"Could not start the Pi CLI at '{self.cli_path}'."
             ) from exc
@@ -232,11 +299,14 @@ class PiRuntime:
                 _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             except (asyncio.TimeoutError, ValueError):
                 pass
-            prompt_file.unlink(missing_ok=True)
+            for f in scratch:
+                f.unlink(missing_ok=True)
 
             log.info("pi_turn_finished", extra={
                 "framework": "pi", "pi_provider": pi_provider, "model": model,
                 "deltas": emitted,
+                "system_prompt_override": system_prompt is not None,
+                "append_system_prompt": append_system_prompt is not None,
                 "duration_ms": round((time.perf_counter() - t0) * 1000, 1),
                 "outcome": "error" if failure else "ok",
             })

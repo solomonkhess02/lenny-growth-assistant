@@ -113,10 +113,17 @@ def cite_label(index: int) -> str:
 
 
 def source_summaries(evidence: list[Evidence]) -> list[dict]:
-    """Citation cards for the UI.
+    """Citation cards for the UI, and the record a turn is rebuilt from.
 
     Every field is copied from a stored row. Nothing here is model output, so
     a source card cannot be fabricated even if the answer text is.
+
+    `chunk_id` and `transcript_id` are keys, not presentation: they are what
+    lets Phase 6 rehydrate the exact evidence a stored answer was written from
+    (retrieval.evidence_by_chunk_ids) instead of re-running a search and
+    silently substituting different material. They are stored-row identifiers
+    like every other field here, so including them changes nothing about who
+    authored this data.
     """
     return [
         {
@@ -129,6 +136,8 @@ def source_summaries(evidence: list[Evidence]) -> list[dict]:
             "start_seconds": e.start_seconds,
             "publish_date": e.publish_date.isoformat() if e.publish_date else None,
             "similarity": e.similarity,
+            "chunk_id": e.chunk_id,
+            "transcript_id": e.transcript_id,
         }
         for i, e in enumerate(evidence)
     ]

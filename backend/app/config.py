@@ -70,6 +70,44 @@ class Settings(BaseSettings):
     # source. None disables the cap.
     retrieval_max_per_source: int | None = 2
 
+    # --- Ship 30 essays (Phase 6) -------------------------------------------
+    # Evidence for an essay: the source answer's chunks are always pinned
+    # first, then topped up from the same query to this total. Larger than
+    # retrieval_k because 1,250 words from 2-3 chunks is thin, and a model that
+    # runs out of material is a model under pressure to invent some. The
+    # similarity floor and per-source cap are UNCHANGED, so the pre-registered
+    # calibration still holds -- see docs/retrieval-calibration.md.
+    essay_retrieval_k: int = 6
+
+    # Per-source cap for the essay top-up only. RETRIEVAL_MAX_PER_SOURCE=2 is a
+    # DIVERSITY guarantee for short answers -- "so k=3 cannot collapse onto one
+    # source". Measured against the corpus, it is also the only thing limiting
+    # an episode-specific question:
+    #
+    #   "How does Duolingo use streaks...?"   cap=2 -> 2 chunks   cap=4 -> 4 chunks
+    #   "What makes a growth team effective?" cap=2 -> 6 chunks from 5 episodes
+    #
+    # So the cap binds exactly where an essay needs more material, and the
+    # chunks it was withholding score 0.66-0.67 -- well above the 0.40 floor,
+    # not barrel-scraping. An essay about one episode's topic may legitimately
+    # draw more deeply from that episode. 4 rather than None: unbounded would
+    # surrender diversity even where diversity is available.
+    #
+    # The floor and the search itself are untouched, so the pre-registered
+    # calibration is unaffected -- this is an existing retrieve() parameter,
+    # given a different value for a different task.
+    essay_max_per_source: int = 4
+
+    # The Ship 30 target. Measured, reported, and never enforced by truncation:
+    # cutting an essay to length would sever quotes and citation tags and could
+    # turn verified prose into a fabrication.
+    essay_target_words: int = 1250
+    essay_word_tolerance: float = 0.20      # 1,000-1,500 counts as on target
+
+    # Override the Ship 30 skill file location. Empty -> app/skills/ (the
+    # runtime image) then .claude/skills/ (the host dev loop). See app/ship30.py.
+    ship30_skill_path: str = ""
+
     # --- database -----------------------------------------------------------
     database_url: str = "postgresql://lenny:CHANGE_ME@127.0.0.1:5432/lenny"
 
@@ -115,6 +153,9 @@ class Settings(BaseSettings):
             "retrieval_k": self.retrieval_k,
             "retrieval_min_similarity": self.retrieval_min_similarity,
             "retrieval_max_per_source": self.retrieval_max_per_source,
+            "essay_retrieval_k": self.essay_retrieval_k,
+            "essay_max_per_source": self.essay_max_per_source,
+            "essay_target_words": self.essay_target_words,
             "agent_framework": "pi",
             "pi_cli_path": self.pi_cli_path,
             "pi_working_dir": self.pi_working_dir or "(system temp)",

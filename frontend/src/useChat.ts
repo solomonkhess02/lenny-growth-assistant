@@ -45,6 +45,7 @@ function toTurns(messages: StoredMessage[]): Turn[] {
   return messages
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({
+      id: m.id,
       role: m.role as "user" | "assistant",
       content: m.content,
       provider: m.provider ?? undefined,
@@ -134,6 +135,9 @@ export function useChat(sessionId: string | null) {
             patchLast({ state: "error", error: data });
           } else if (event === "done") {
             patchLast({
+              // The id arrives with the terminal event, which is also the
+              // moment the turn becomes eligible to be written up.
+              id: data.message_id,
               state: data.abstained
                 ? "abstained"
                 : grounding && !grounding.grounded

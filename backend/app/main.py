@@ -16,7 +16,7 @@ from .db import dispose, ping
 from .errors import register_error_handlers
 from .logging_conf import configure_logging, request_id_var
 from .providers import close_http_client
-from .routers import chat, health, providers, retrieval, sessions
+from .routers import chat, essays, health, providers, retrieval, sessions
 
 log = logging.getLogger("app")
 
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(providers.router, prefix=api)
     app.include_router(sessions.router, prefix=api)
     app.include_router(chat.router, prefix=api)
+    app.include_router(essays.router, prefix=api)
     app.include_router(retrieval.router, prefix=api)
 
     # Built frontend, when present. Keeps the stack to ONE app container

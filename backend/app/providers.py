@@ -87,15 +87,25 @@ class ModelProvider(abc.ABC):
                 "base_url": self.base_url, "agent_framework": "pi",
                 "pi_provider": self.pi_provider}
 
-    def stream(self, prompt: str) -> AsyncIterator[str]:
+    def stream(self, prompt: str, *, system_prompt: str | None = None,
+               append_system_prompt: str | None = None) -> AsyncIterator[str]:
         """Generation runs through Pi for every provider.
 
         Concrete providers do not override this. Keeping one implementation is
         what makes "switch provider by configuration" true by construction
         rather than by convention.
+
+        The two prompt arguments exist for Phase 6: Ship 30 essays need their
+        own system prompt (the application-owned grounding rules) plus the
+        skill body appended to it. They are keyword-only and default to None,
+        so the chat path calls this exactly as it always did -- and they are
+        strings, not paths, so no caller has to know that Pi takes them as
+        files. That detail stays inside PiRuntime.
         """
         return PiRuntime(self.settings).stream(
-            pi_provider=self.pi_provider, model=self.model, prompt=prompt)
+            pi_provider=self.pi_provider, model=self.model, prompt=prompt,
+            system_prompt=system_prompt,
+            append_system_prompt=append_system_prompt)
 
 
 class OllamaProvider(ModelProvider):

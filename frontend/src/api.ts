@@ -8,7 +8,7 @@
  * and a "helpful" client retry is exactly how such a property gets lost.
  */
 import type {
-  Health, ProviderHealth, ProviderList, SessionDetail, SessionSummary,
+  Essay, Health, ProviderHealth, ProviderList, SessionDetail, SessionSummary,
   StreamError,
 } from "./types";
 
@@ -65,24 +65,33 @@ export const createSession = (provider?: string) =>
     body: JSON.stringify({ title: null, user_metadata: {}, provider: provider ?? null }),
   });
 
+export const listEssays = (sessionId: string) =>
+  json<Essay[]>(`/api/sessions/${sessionId}/essays`);
+export const getEssay = (id: string) => json<Essay>(`/api/essays/${id}`);
+
 export type SseFrame = { event: string; data: any };
 
 /**
- * Post a message and yield SSE frames as they arrive.
+ * POST a JSON body and yield SSE frames as they arrive.
  *
  * EventSource cannot POST, so the body is parsed by hand. Frames are split on
  * a blank line and only complete frames are emitted -- a partial frame stays
  * in the buffer, which is what makes token-by-token delivery safe.
+ *
+ * One implementation serves chat turns and essays alike, because they are the
+ * same protocol. A second copy would be a second place for the framing to
+ * drift, and a 1,250-word essay streamed over ten minutes is exactly where a
+ * subtle buffering bug would surface first.
  */
-export async function* postMessage(
-  sessionId: string,
-  content: string,
+async function* sseStream(
+  path: string,
+  payload: unknown,
   signal?: AbortSignal,
 ): AsyncGenerator<SseFrame> {
-  const res = await fetch(`/api/sessions/${sessionId}/messages`, {
+  const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(payload),
     signal,
   });
 
@@ -118,3 +127,28 @@ export async function* postMessage(
     }
   }
 }
+
+/** Ask a question on a session. */
+export const postMessage = (
+  sessionId: string,
+  content: string,
+  signal?: AbortSignal,
+) => sseStream(`/api/sessions/${sessionId}/messages`, { content }, signal);
+
+/**
+ * Turn an existing verified answer into a Ship 30 essay.
+ *
+ * Carries only the message id. The provider is a property of the session, so
+ * the essay runs on whatever wrote the answer -- there is no field here that
+ * could ask for anything else, and that absence is the guarantee.
+ */
+export const postEssay = (
+  sessionId: string,
+  sourceMessageId: string,
+  signal?: AbortSignal,
+) =>
+  sseStream(
+    `/api/sessions/${sessionId}/essays`,
+    { source_message_id: sourceMessageId },
+    signal,
+  );

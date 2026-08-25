@@ -20,6 +20,12 @@ backend/.venv/
 .git/
 .gitignore
 .claude/
+# ...except the Ship 30 skill, which app/ship30.py loads at runtime to build
+# the essay system prompt. Without this the skill is absent from the image and
+# essay generation fails in `docker compose up` while working on the host --
+# the difference showing up only in the graded deployment. Docker's ignore
+# rules are last-match-wins, so this negation re-includes it.
+!.claude/skills/05-ship30-writing/
 .agents/
 
 # Spike artifacts: only the real transcripts and Phase 1 model output are used

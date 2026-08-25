@@ -236,3 +236,86 @@ async def test_no_episode_is_silently_empty(corpus_db):
     )).all()
     empty = [slug for slug, count in rows if count == 0]
     assert not empty, f"episodes indexed with zero chunks: {empty}"
+
+
+# --------------------------------------------------------------------------
+# Rehydration (Phase 6): reading specific chunks back, not searching for them
+# --------------------------------------------------------------------------
+class TestEvidenceRehydration:
+    """Turning stored citation cards back into the evidence they name.
+
+    This is what lets an essay be written from the evidence a reader actually
+    saw. It is a primary-key read, deliberately not a search: a search could
+    return different material under the same labels.
+    """
+
+    async def test_returns_evidence_in_the_order_requested(self, corpus_db):
+        """Order is the caller's, because order IS the citation label."""
+        from app.retrieval import evidence_by_chunk_ids, retrieve
+
+        found = await retrieve(corpus_db, "How do streaks improve retention?", 3)
+        assert len(found) >= 2, "corpus returned too little to test ordering"
+
+        ids = [e.chunk_id for e in found]
+        back = await evidence_by_chunk_ids(corpus_db, ids)
+        assert [e.chunk_id for e in back] == ids
+
+        # And reversed, to prove the order is honoured rather than coincidental.
+        back_rev = await evidence_by_chunk_ids(corpus_db, list(reversed(ids)))
+        assert [e.chunk_id for e in back_rev] == list(reversed(ids))
+
+    async def test_rehydrated_evidence_matches_the_original(self, corpus_db):
+        """Same row in, same evidence out -- text, speaker, deep link and all."""
+        from app.retrieval import evidence_by_chunk_ids, retrieve
+
+        found = await retrieve(corpus_db, "How do streaks improve retention?", 2)
+        back = await evidence_by_chunk_ids(
+            corpus_db, [e.chunk_id for e in found],
+            similarities={e.chunk_id: e.similarity for e in found})
+
+        for original, restored in zip(found, back):
+            assert restored.text == original.text
+            assert restored.speaker == original.speaker
+            assert restored.source_title == original.source_title
+            assert restored.citation_url == original.citation_url
+            assert restored.similarity == original.similarity
+
+    async def test_unknown_similarity_is_zero_not_invented(self, corpus_db):
+        """A score nothing measured must not appear on a citation card."""
+        from app.retrieval import evidence_by_chunk_ids, retrieve
+
+        found = await retrieve(corpus_db, "How do streaks improve retention?", 1)
+        back = await evidence_by_chunk_ids(corpus_db, [found[0].chunk_id])
+        assert back[0].similarity == 0.0
+
+    async def test_a_missing_chunk_refuses_the_whole_set(self, corpus_db):
+        """Partial evidence is not a smaller version of the same answer.
+
+        Re-ingesting replaces chunk ids, so this is the realistic case: better
+        to refuse than to write from whatever half still resolves.
+        """
+        import uuid as _uuid
+
+        import pytest
+
+        from app.errors import EvidenceUnavailable
+        from app.retrieval import evidence_by_chunk_ids, retrieve
+
+        found = await retrieve(corpus_db, "How do streaks improve retention?", 1)
+        with pytest.raises(EvidenceUnavailable) as exc:
+            await evidence_by_chunk_ids(
+                corpus_db, [found[0].chunk_id, str(_uuid.uuid4())])
+        assert "re-ingested" in str(exc.value), "the error must name the likely cause"
+
+    async def test_malformed_id_is_refused_not_ignored(self, corpus_db):
+        import pytest
+
+        from app.errors import EvidenceUnavailable
+        from app.retrieval import evidence_by_chunk_ids
+
+        with pytest.raises(EvidenceUnavailable):
+            await evidence_by_chunk_ids(corpus_db, ["not-a-uuid"])
+
+    async def test_empty_request_is_an_empty_list(self, corpus_db):
+        from app.retrieval import evidence_by_chunk_ids
+        assert await evidence_by_chunk_ids(corpus_db, []) == []

@@ -12,15 +12,17 @@ evaluator must be able to clone and run it from the documented steps alone.
 
 ## Current status — read before planning any work
 
-**Phases 1–5 are complete and verified.** Backend, transcript ingestion, deterministic
-retrieval, grounding verification, the Pi agent layer, the Docker agent path, and the Phase 5
-chat UI all ship and are covered by the suite (263 passed, 0 skipped, as of 2026-08-25).
+**Phases 1–6 are complete and verified.** Backend, transcript ingestion, deterministic
+retrieval, grounding verification, the Pi agent layer, the Docker agent path, the Phase 5 chat
+UI and Phase 6 Ship 30 essays all ship (326 passed, 0 skipped on the host; 324 passed, 2 skipped
+in the runtime image, as of 2026-08-25).
 
 **Do not redo a completed phase unless a regression is demonstrated** — reproduce it first,
 then fix it.
 
-**Phase 6 is next: Ship 30 essay generation.** Then artifact isolation (7), failure-mode
-hardening (8), README/PRD/design.md/architecture.md/demo video (9).
+**Phase 7 is next: artifact isolation** — the Artifact Pane currently renders essays as escaped
+text and must not render markup before that policy exists. Then failure-mode hardening (8),
+README/PRD/design.md/architecture.md/demo video (9).
 
 **Phase 5 locked three semantics that later phases must not undo:**
 
@@ -32,6 +34,22 @@ hardening (8), README/PRD/design.md/architecture.md/demo video (9).
 - **A failed `grounding` verdict is a retraction**, not a footnote — the answer is struck
   through under a banner naming the fabricated quotes and invalid tags. Sources and verdicts are
   persisted (`messages.sources`, `messages.grounding`), so both survive a reload.
+
+**Phase 6 locked four more:**
+
+- **An essay is written from a verified answer, or not at all.** Abstentions (422), failed
+  verdicts and NULL verdicts (409) are refused server-side. Building 1,250 confident words on an
+  answer known to contain fabricated quotes would launder a failure into a more shareable
+  artifact.
+- **Evidence is rehydrated by `chunk_id`, never re-searched.** If a chunk is gone —
+  `ingest --force` replaces chunk ids — the request fails with `evidence_unavailable` rather than
+  silently swapping in different material under the same `[E#]` labels.
+- **Trust rules are code-owned; craft is skill-owned.** `app/prompts/ship30_rules.md` goes to Pi
+  as `--system-prompt`; `SKILL.md` as `--append-system-prompt`. Editing the skill changes how an
+  essay reads and can never relax grounding. Pi's `--skill` is unusable here — it is
+  progressive-disclosure, so the body needs the `read` tool that `--no-tools` removes.
+- **The word target is measured and reported, never enforced.** Truncating would sever quotes and
+  citation tags mid-sentence and could turn verified prose into a fabrication.
 
 [docs/verification-matrix.md](docs/verification-matrix.md) is the **status of record** at
 assignment level — one row per requirement, with executed-test evidence. Read it rather than
@@ -89,6 +107,8 @@ routers/chat.py   transport only — SSE framing, no queries, no provider decisi
     providers.py  the provider seam
       pi_runtime.py   Pi subprocess, JSON-lines events
     grounding.py  quote/citation verification
+  ship30.py       essay generation — content transformation, NOT another
+                  branch inside agent.py (skill 03 separates the two)
 ```
 
 **Two invariants in [backend/app/agent.py](backend/app/agent.py) are structural, not prompted:**
@@ -139,8 +159,8 @@ Abstention on replayed history is *derived* (`sources == [] && grounding != null
 sound only because of the "no evidence, no answer" invariant above.
 
 **API surface:** `/api/health`, `/api/health/live`, `/api/config`, `/api/providers[/check]`,
-`POST /api/providers/probe`, `/api/sessions` (CRUD + `/{id}/messages`), `/api/retrieval/search`,
-`/api/retrieval/status`. `/api/health` reports real dependency state — DB down is `unhealthy`
+`POST /api/providers/probe`, `/api/sessions` (CRUD + `/{id}/messages` + `/{id}/essays`), `/api/essays/{id}`,
+`/api/retrieval/search`, `/api/retrieval/status`. `/api/health` reports real dependency state — DB down is `unhealthy`
 (503), provider down is `degraded` (200), because an operator needs to tell a broken deployment
 from an unstarted Ollama.
 
@@ -154,6 +174,7 @@ from an unstarted Ollama.
 | Cloud LLM | Anthropic Claude or OpenAI (DeepSeek via the Anthropic-compatible endpoint) | ✅ `deepseek` |
 | Local LLM | **Ollama, mandatory** — the demo must run on it | ✅ `qwen3:4b-instruct` |
 | Provider switching | Per session, selected provider visible, fallback documented | ✅ backend + UI |
+| Ship 30 essays | ~1,250 words, grounded, in the Artifact Viewer | ✅ Phase 6 — verified live on Ollama (1,338 words, 254.7s); see [docs/ship30-essays.md](docs/ship30-essays.md) |
 | Knowledge base | Lenny's Podcast transcripts with traceable attribution | ✅ 20 episodes, [data/transcripts/](data/transcripts/) |
 | Startup | One command | ✅ `docker compose up` |
 | Config | `.env.example`, required vs optional marked, no committed secrets | ✅ |
@@ -178,6 +199,14 @@ Sessions must maintain **independent context** and must not leak context across 
   return 0; `message.stopReason == "error"` is the only reliable signal.
 - **Pi always runs `--no-tools`.** Retrieval is deterministic application code; the agent needs
   no tool surface, and read/write/edit/bash in a web backend is a live liability.
+- **`docker compose --profile test run` does NOT rebuild.** It served a cached pre-Phase-5
+  image for two phases, which is why the container count sat at 251 while the host grew. Run
+  `docker compose --profile test build api-tests` first, and check the collected count.
+- **Pi's `--skill` cannot deliver a skill body under `--no-tools`.** Skills are
+  progressive-disclosure: only name+description enter the system prompt, and the body arrives via
+  the `read` tool. Use `--system-prompt` / `--append-system-prompt`, which read a file when the
+  argument is a path — and note Pi silently uses the path *as prompt text* when the file is
+  missing, so verify existence before spawning.
 - **Changing `EMBEDDING_MODEL`/`EMBEDDING_DIM` requires a full re-ingest** — vector spaces are
   incompatible.
 
@@ -210,7 +239,12 @@ JSONB, the CASCADE, or the unique `(session_id, seq)` index.
   hardcode provider choice. Handle missing key, Ollama unavailable, model unavailable, timeout,
   malformed response. Log provider/model/duration/outcome — never keys.
 - **`05-ship30-writing`** — ~1,250 words, Hook → setup → tension → insight → explanation →
-  application → takeaway. Every substantive claim traceable to retrieved evidence.
+  application → takeaway. Every substantive claim traceable to retrieved evidence. **This file is
+  live prompt input**: `app/ship30.py` reads it and passes it to Pi as `--append-system-prompt`,
+  and its sha256 is stamped on every essay. Editing it changes generated output with no code
+  change — which is the point — but the grounding rules deliberately live elsewhere
+  (`app/prompts/ship30_rules.md`), so an edit here cannot relax them. The Dockerfile copies it
+  into the image; `.dockerignore` has a matching negation.
 - **`06-artifact-security`** — generated HTML/CSS is untrusted input. Explicit isolation and/or
   sanitization strategy with a stated permit/block/strip policy an evaluator can read. If an
   artifact cannot be rendered safely, do not render it — surface the reason and log it.

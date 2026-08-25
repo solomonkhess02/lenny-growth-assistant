@@ -41,6 +41,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/migrations ./migrations
+
+# The Ship 30 skill, from its single authored location. Copied rather than
+# duplicated in the repo so there is exactly one copy to keep correct; see
+# app/ship30.py for the lookup order (app/skills first, .claude/skills second).
+COPY .claude/skills/05-ship30-writing/SKILL.md ./app/skills/05-ship30-writing/SKILL.md
 COPY backend/alembic.ini ./
 
 # Serving the built SPA from FastAPI keeps the stack to ONE app container

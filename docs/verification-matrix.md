@@ -7,7 +7,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 - **Status key:** ✅ met with evidence · 🟡 partially met · ⬜ not started (phase not reached)
 - Test names are runnable: `cd backend && python -m pytest -k <name>`
-- Current suite: **263 passed, 0 failed, 0 skipped** (2026-08-25, Phase 5)
+- Current suite: **326 passed, 0 failed, 0 skipped** on the host; **324 passed, 2 skipped** in the runtime image (2026-08-25, Phase 6). The 2 container skips are the packaging tests, which read `Dockerfile` / `.dockerignore` — files deliberately absent from the image.
 
 ---
 
@@ -51,9 +51,9 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 | Req | Acceptance criteria | Evidence | Status |
 |---|---|---|---|
 | Q&A grounded in transcripts | Answerable → cited answer; unsupported → abstain | 38 eval + 22 agent tests; grounded answers on Ollama (24.2s) and DeepSeek (3.9s) | ✅ |
-| Ship 30 essay generation | ~1,250 words, correct structure | — | ⬜ Phase 6 |
+| Ship 30 essay generation | ~1,250 words, correct structure | `tests/test_ship30.py` (30), `tests/test_essays.py` (23). **Live on the mandated path**: Ollama/`qwen3:4b-instruct` in the container, **1,338 words**, within target, 254.7 s | ✅ Phase 6 |
 | Artifact Viewer — integration | Pane present, open/close, empty + loading states | `frontend/src/components/ArtifactPane.tsx` | ✅ Phase 5 (layout/plumbing only) |
-| Artifact Viewer — rendering | Renders Markdown/HTML side by side | — | ⬜ Phase 7 (needs Phase 6 content) |
+| Artifact Viewer — rendering | Renders Markdown/HTML side by side | Phase 6 shows the essay as **escaped text** (React text node in `<pre>`) — no `dangerouslySetInnerHTML`, no `iframe`, no Markdown library in `package.json`. Formatting awaits the isolation policy | 🟡 content exists, rendering is Phase 7 |
 | Artifact isolation | Stated permit/block/strip policy | Decision D-4 recorded. Phase 5 renders **no** untrusted content — no `dangerouslySetInnerHTML`, no iframe — so the pane cannot outrun its policy | ⬜ Phase 7 |
 
 ## §5 Resilience (failure modes)
@@ -105,13 +105,62 @@ Run after `docker compose up` on a clean checkout. Steps marked ⬜ depend on un
 | M13 | Ask an unsupported question | Explicit abstention, no fabrication | ✅ **verified in-browser** — own neutral state (0.1 s), no error styling, no citations; DOM probe: 0 `.turn-error`, 0 `.verdict.fail` |
 | M14 | Follow-up question | Resolves against prior turn | ✅ at retrieval level |
 | M15 | New session | No bleed from previous session | ✅ verified |
-| M16 | Generate a Ship 30 essay on Ollama | ~1,250 words, renders | ⬜ Phase 6 |
+| M16 | Generate a Ship 30 essay on Ollama | ~1,250 words, renders | ✅ **verified 2026-08-25** — in-container on `qwen3:4b-instruct`: **1,338 words** (within the 1,000–1,500 band), 254.7 s, first token 53.2 s, 4 evidence items (2 carried + 2 added), `blockquote_lines: 0`, no `maxTokens` truncation. Verdict **FAIL** — 3 fabricated quotes of 8 checked, all wholly invented (longest matching prefix: one word) — so the essay was **retracted**, which is the local path behaving as Phase 1 predicted |
 | M17 | Script-bearing HTML artifact | Handled per stated policy | ⬜ Phase 7 |
 | M18 | Kill Ollama mid-request | Structured, legible, logged error | ⬜ Phase 8 |
 | M19 | Provider indicator matches the active session | Header names the session's provider + model, and its health | ✅ **verified in-browser** — deepseek session under `LLM_PROVIDER=ollama` shows `deepseek · deepseek-v4-pro`; a degraded session shows `ollama · qwen3:4b-instruct · unavailable` |
 | M20 | Retry does not change provider | Reissue stays on the session's provider | ✅ **verified in-browser** — provider unreachable; header identical before/after Retry; across every message stream the only provider named was `ollama`, never the healthy `deepseek` |
 | M21 | Citations/grounding replay after reload | Reload restores evidence and verdict | ✅ **verified in-browser** — post-reload view pixel-identical to live, incl. citations, 28.9 s latency and verdict |
 | M22 | Artifact pane layout / open / close | Pane renders, collapses, restores; no untrusted HTML | ✅ **verified in-browser** — empty state + Hide/Show; renders no generated content (Phase 7 owns isolation) |
+
+## Phase 6 additions
+
+Ship 30 essays. Written **from an existing verified answer**, on the session's provider, from
+that answer's own evidence, verified like any other generated text. Full reasoning in
+[ship30-essays.md](ship30-essays.md).
+
+| Req | Acceptance criteria | Evidence | Status |
+|---|---|---|---|
+| Skill reaches the model | `SKILL.md` body is in the system prompt, not merely named | `test_generation_carries_rules_and_skill_separately`. Pi's `--skill` is progressive-disclosure — the body needs the `read` tool, which `--no-tools` removes — so delivery is via `--append-system-prompt` | ✅ |
+| Grounding rules are code-owned | An edit to the skill cannot relax them | `test_rules_are_application_owned_not_skill_owned` — each non-negotiable must be in `app/prompts/ship30_rules.md` and **absent** from `SKILL.md` | ✅ |
+| Skill is in the runtime image | Present and byte-identical | sha256 `48e0fd16…` matches in image and repo; `TestSkillIsShipped` pins the `.dockerignore` negation and the Dockerfile COPY | ✅ |
+| Missing skill fails loudly | Never spawns Pi with a path-as-prompt | `test_missing_skill_file_fails_loudly`. Pi treats a bad path as literal prompt text, so the app must catch it | ✅ |
+| No ambient skill discovery | `--no-skills` on every call | `test_skill_discovery_is_always_disabled`. Global `~/.pi/agent/skills` is found regardless of workdir | ✅ |
+| Evidence is carried, not re-searched | Same chunks, same labels | `test_carried_evidence_keeps_its_position`, `test_essay_sources_prefix_matches_the_answers` | ✅ |
+| Stale evidence refuses | Re-ingest replaces chunk ids → 409, no substitute search | `test_a_missing_chunk_refuses_the_whole_set`, `test_stale_chunk_ids_end_the_stream_with_evidence_unavailable` | ✅ |
+| Top-up adds real material | Deeper on episode-specific questions, floor untouched | `test_topup_goes_deeper_on_an_episode_specific_question`. Measured live: evidence 2 → 4, essay 995 → 1,090 words | ✅ |
+| No essay from an abstention | 422, naming the reason | `test_abstention_cannot_be_turned_into_an_essay` | ✅ |
+| **No essay from a failed verdict** | 409; no generation attempted | `test_failed_verdict_cannot_be_turned_into_an_essay` | ✅ enforced |
+| Unverified ≠ verified-clean | NULL grounding refused like a FAIL | `test_unverified_answer_is_refused_like_a_failed_one` | ✅ |
+| Cross-session message refused | 404, not 403 | `test_message_from_another_session_is_404_not_403` | ✅ |
+| Essay verified unconditionally | Every essay, every provider | `test_every_essay_is_verified` | ✅ |
+| Curly **and** straight, at essay length | Both caught in a long Markdown body | `test_fabricated_curly_quote_in_an_essay_is_caught`, `test_fabricated_straight_quote_in_an_essay_is_caught` | ✅ |
+| Honest essays still pass | Both quote styles accepted when real | `test_a_genuinely_clean_essay_passes` | ✅ |
+| Word target reported, never enforced | No truncation, misses surfaced | `test_nothing_is_truncated_to_hit_the_target`, `test_reported_word_count_is_the_stored_markdown` | ✅ |
+| Runs on the session's provider | deepseek session under `LLM_PROVIDER=ollama` | `test_essay_runs_on_the_sessions_provider_not_the_configured_one`; verified live | ✅ |
+| **No automatic substitution** | Dead provider → terminal error; other provider never named | `test_a_failing_provider_is_surfaced_never_substituted` (essay mirror) | ✅ |
+| Provenance persisted | provider, model, latency, skill + sha256 | `test_essay_is_persisted_with_full_provenance` | ✅ |
+| Citations + verdict survive reload | Stored == streamed | `test_citations_and_verdict_survive_a_reload`, `test_failed_verdict_on_an_essay_is_persisted_not_dropped` | ✅ |
+| Essays are not turns | Absent from the transcript and from history | `test_essays_do_not_appear_in_the_conversation` | ✅ |
+| Session isolation | Essays scoped, cascade on delete | `test_essays_are_isolated_between_sessions`, `test_deleting_a_session_cascades_its_essays` | ✅ |
+| Migration reversible | upgrade → downgrade → upgrade | Executed on the dev DB; corpus intact at 1,395 chunks | ✅ |
+| Pane renders no untrusted markup | Escaped text only | `grep` over `frontend/src`: 0 `dangerouslySetInnerHTML`, 0 `iframe`, 0 `innerHTML`; no Markdown lib in `package.json` | ✅ |
+| Frontend type gate | `npm run build` clean | `tsc -b && vite build` → 41 modules, 0 errors | ✅ |
+
+### Live generations (evidence for M16)
+
+| Path | Words | Within target | Wall clock | First token | Evidence | Verdict |
+|---|---:|---|---:|---:|---:|---|
+| **Ollama** `qwen3:4b-instruct` (container) | **1,338** | ✅ | 254.7 s | 53.2 s | 4 (2 carried + 2 added) | **FAIL** — 3/8 quotes invented |
+| DeepSeek `deepseek-v4-pro` (container) | 1,090 | ✅ | 160.1 s | 144.1 s | 4 (2 + 2) | **FAIL** — 1/26 quotes altered |
+| DeepSeek, before the per-source cap fix | 995 | ✗ | 78.6 s | 56.5 s | 2 (2 + 0) | FAIL — 1/22 |
+
+Both models fabricated on a real Ship 30 task and **both were caught**. Every flagged span was
+checked by hand against the evidence: none was a false positive. On Ollama all three were wholly
+invented; on DeepSeek the model altered a quote's tense (`"hits a little bit different"` →
+`"hit …"`) and coined a scare-quote of its own. This reproduces the Phase 1 finding — qwen3
+fabricated 6 of 28 quotes in that era's Ship 30 essay — and is why **retraction is a first-class
+screen on the local path, not an edge case**.
 
 ## Phase 5 additions
 
@@ -208,9 +257,32 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
    runtime are baked into the image; `deploy/pi-models.json` is installed at
    `/home/appuser/.pi/agent/models.json`. Verified by cold build and in-container generation on
    both providers. See `agent-framework-comparison.md` §14.
-10. **Ingestion needs network once** to fetch the pinned corpus. Must be a documented README prerequisite alongside `ollama pull`.
+10. **Markdown blockquotes are outside quote verification.** A fabricated pull-quote in a `>`
+    block is never examined. The obvious fix was **tested and rejected**: the real Phase 1 essay's
+    blockquotes are a sources list, so naive extraction flags four honest lines and breaks the
+    pinned 28/6 assertion. Phase 6 instructs against blockquote quotation and reports a
+    `blockquote_lines` count (0 in all three live runs). Closing it properly needs its own
+    calibration. See `ship30-essays.md` §5.
 
-11. ~~Phase 5 UI verified structurally, not visually~~ — **RESOLVED (2026-08-25).** Driven in
+11. **No generation timeout.** A hung provider hangs an essay stream, and an essay runs for
+    minutes. Phase 8's row, stated rather than half-implemented.
+
+12. **A disconnect discards a ten-minute generation.** Nothing partial is persisted, because a
+    truncated essay is not an essay. No resumable job in Phase 6.
+
+13. **`deepseek_max_tokens` / `deepseek_disable_thinking` are unwired.** Defined in `config.py`,
+    read nowhere. DeepSeek's Phase 1 Test C returned empty after 4,096 output tokens, consistent
+    with thinking consuming the budget. Pi exposes `--thinking`; not wired, because the live runs
+    did not reproduce the failure.
+
+14. **The container test image does not rebuild on `--profile test run`.** It served a cached
+    pre-Phase-5 image, which is why "251 passed in the container" was recorded at Phase 4.6 and
+    stayed at 251 through Phase 5. `docker compose --profile test build api-tests` is required
+    first; the Phase 6 numbers above were taken after a forced rebuild.
+
+15. **Ingestion needs network once** to fetch the pinned corpus. Must be a documented README prerequisite alongside `ollama pull`.
+
+16. ~~Phase 5 UI verified structurally, not visually~~ — **RESOLVED (2026-08-25).** Driven in
     headless Chromium against the real Docker stack: citations-before-text measured in the DOM,
     retraction confirmed by computed style, abstention confirmed as a non-error state, provider
     indicator and retry checked against a deliberately unreachable provider, reload replay

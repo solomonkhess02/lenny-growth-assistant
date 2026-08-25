@@ -68,6 +68,76 @@ export type StoredMessage = {
 
 export type SessionDetail = SessionSummary & { messages: StoredMessage[] };
 
+/**
+ * A generated Ship 30 essay.
+ *
+ * Carries the same trust fields a message does, for the same reasons:
+ * `sources` so the citations survive a reload, `grounding` so a failed verdict
+ * still retracts the essay after a refresh, and provider/model/skill so the
+ * artifact stays attributable to what wrote it.
+ *
+ * `markdown` is the raw generated source. It is rendered as ESCAPED TEXT in
+ * Phase 6 -- never parsed to HTML, never injected. Phase 7 owns the isolation
+ * policy that would let it be rendered.
+ */
+export type Essay = {
+  id: string;
+  session_id: string;
+  source_message_id: string | null;
+  title: string | null;
+  markdown: string;
+  format: string;
+  word_count: number;
+  provider: string;
+  model: string;
+  latency_ms: number | null;
+  sources: Source[];
+  grounding: Grounding | null;
+  skill_name: string;
+  skill_sha256: string;
+  created_at: string;
+};
+
+/** The terminal payload of an essay stream. */
+export type EssayDone = {
+  essay_id: string;
+  title: string | null;
+  word_count: number;
+  target_words: number;
+  within_target: boolean;
+  blockquote_lines: number;
+  trustworthy: boolean;
+  supported: boolean;
+  latency_ms: number;
+};
+
+/**
+ * An essay as the UI holds it, live or replayed.
+ *
+ * Reuses TurnState rather than defining a parallel vocabulary: the essay
+ * stream is the same protocol, so it has the same states, and `retracted`
+ * means the same thing in both places.
+ */
+export type EssayView = {
+  id?: string;
+  title: string | null;
+  markdown: string;
+  sources: Source[];
+  grounding: Grounding | null;
+  state: TurnState;
+  error?: StreamError;
+  provider?: string;
+  model?: string;
+  skill?: string;
+  wordCount: number;
+  targetWords?: number;
+  withinTarget?: boolean;
+  latencyMs?: number;
+  /** Wall-clock since the request started. A 10-minute local generation needs
+   *  to look like progress rather than a hang. */
+  elapsedMs?: number;
+};
+
 export type ProviderList = {
   selected: string;
   available: string[];
@@ -113,6 +183,12 @@ export type TurnState =
   | "error"; // the turn failed
 
 export type Turn = {
+  /** The persisted message id, once there is one.
+   *
+   *  Absent while a turn is still streaming, which is exactly the window in
+   *  which it is not yet eligible to become an essay -- so the missing id and
+   *  the missing eligibility line up rather than needing separate tracking. */
+  id?: string;
   role: "user" | "assistant";
   content: string;
   provider?: string;

@@ -66,6 +66,25 @@ class ResourceConflict(AppError):
     retryable = True
 
 
+class EvidenceUnavailable(AppError):
+    """The stored evidence behind an answer can no longer be read.
+
+    Raised when a turn's chunk ids no longer resolve -- most realistically
+    after `python -m app.ingest --force`, which CASCADE-deletes chunks and
+    re-creates them with new UUIDs.
+
+    It is a distinct error rather than a fallback to a fresh search on purpose.
+    Re-retrieving would hand the writer *different* evidence from the evidence
+    the reader saw, under the same citation labels. Refusing is the honest
+    outcome; quietly substituting is the failure mode this product exists to
+    avoid.
+    """
+
+    code = "evidence_unavailable"
+    http_status = status.HTTP_409_CONFLICT
+    message = "The evidence behind that answer is no longer available."
+
+
 class DatabaseUnavailable(AppError):
     code = "database_unavailable"
     http_status = status.HTTP_503_SERVICE_UNAVAILABLE

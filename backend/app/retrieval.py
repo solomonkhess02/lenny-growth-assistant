@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .embeddings import EmbeddingClient
-from .errors import ProviderMisconfigured
+from .errors import EvidenceUnavailable, ProviderMisconfigured
 from .models import Chunk, Transcript
 from .repository import list_messages
 
@@ -194,22 +194,7 @@ async def retrieve(
         if cap and per_source.get(chunk.transcript_id, 0) >= cap:
             continue
         per_source[chunk.transcript_id] = per_source.get(chunk.transcript_id, 0) + 1
-        out.append(Evidence(
-            source_id=transcript.slug,
-            source_title=transcript.title,
-            speaker=chunk.speaker,
-            source_url=transcript.youtube_url,
-            transcript_id=str(chunk.transcript_id),
-            chunk_id=str(chunk.id),
-            publish_date=transcript.publish_date,
-            chunk_index=chunk.chunk_index,
-            guest=transcript.guest,
-            text=chunk.text,
-            start_seconds=chunk.start_seconds,
-            end_seconds=chunk.end_seconds,
-            similarity=round(similarity, 6),
-            citation_url=_citation_url(transcript.youtube_url, chunk.start_seconds),
-        ))
+        out.append(_evidence_from_row(chunk, transcript, round(similarity, 6)))
         if len(out) >= k:
             break
 
@@ -221,6 +206,100 @@ async def retrieve(
         "embedding_model": embedder.model,
         "duration_ms": round((time.perf_counter() - t0) * 1000, 1),
         "outcome": "ok" if out else "empty",
+    })
+    return out
+
+
+def _evidence_from_row(chunk: Chunk, transcript: Transcript,
+                       similarity: float) -> Evidence:
+    """Build an Evidence from the two rows it lives in.
+
+    Shared by the vector search and by rehydration so the two can never drift
+    into describing the same chunk differently.
+    """
+    return Evidence(
+        source_id=transcript.slug,
+        source_title=transcript.title,
+        speaker=chunk.speaker,
+        source_url=transcript.youtube_url,
+        transcript_id=str(chunk.transcript_id),
+        chunk_id=str(chunk.id),
+        publish_date=transcript.publish_date,
+        chunk_index=chunk.chunk_index,
+        guest=transcript.guest,
+        text=chunk.text,
+        start_seconds=chunk.start_seconds,
+        end_seconds=chunk.end_seconds,
+        similarity=similarity,
+        citation_url=_citation_url(transcript.youtube_url, chunk.start_seconds),
+    )
+
+
+async def evidence_by_chunk_ids(
+    db: AsyncSession,
+    chunk_ids: list[str],
+    *,
+    similarities: dict[str, float] | None = None,
+) -> list[Evidence]:
+    """Re-read specific chunks by primary key, in the order asked for.
+
+    This is NOT a search. It is how a stored turn gets its evidence back: the
+    citation cards on a persisted message carry the chunk ids, and reading
+    those rows reproduces exactly what the model was shown -- no embedding, no
+    ranking, no floor, nothing that could return different material than the
+    reader already saw.
+
+    Order is the caller's, not the database's, because the caller's order is
+    what [E1], [E2]... already mean to a reader looking at that turn.
+
+    `similarities` restores the score each chunk had when it was retrieved.
+    Recomputing it is impossible without the original query and inventing one
+    would put a number on a card that nothing measured, so an unknown score is
+    left at 0.0 rather than guessed.
+
+    Raises EvidenceUnavailable if ANY id is missing. Partial evidence is not a
+    smaller version of the same answer -- it is different evidence under the
+    same labels.
+    """
+    if not chunk_ids:
+        return []
+
+    wanted: list[uuid.UUID] = []
+    for cid in chunk_ids:
+        try:
+            wanted.append(uuid.UUID(str(cid)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise EvidenceUnavailable(
+                f"Stored evidence carries a malformed chunk id ({cid!r})."
+            ) from exc
+
+    rows = (await db.execute(
+        select(Chunk, Transcript)
+        .join(Transcript, Transcript.id == Chunk.transcript_id)
+        .where(Chunk.id.in_(wanted))
+    )).all()
+    by_id = {str(chunk.id): (chunk, transcript) for chunk, transcript in rows}
+
+    missing = [str(c) for c in wanted if str(c) not in by_id]
+    if missing:
+        raise EvidenceUnavailable(
+            f"{len(missing)} of {len(wanted)} cited chunks no longer exist "
+            f"(first: {missing[0]}). The corpus was most likely re-ingested "
+            f"since that answer was written -- `python -m app.ingest --force` "
+            f"replaces chunk ids. Ask the question again to get a fresh answer "
+            f"to write from."
+        )
+
+    scores = similarities or {}
+    out = [
+        _evidence_from_row(*by_id[str(cid)], float(scores.get(str(cid), 0.0)))
+        for cid in wanted
+    ]
+
+    log.info("evidence_rehydrated", extra={
+        "requested": len(wanted), "returned": len(out),
+        "sources": sorted({e.source_id for e in out}),
+        "outcome": "ok",
     })
     return out
 

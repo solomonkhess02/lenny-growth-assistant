@@ -17,7 +17,8 @@
           "reasoning": false,
           "input": ["text"],
           "contextWindow": 8192,
-          "maxTokens": 2048,
+          "_maxTokens_note": "3072, not 2048: Phase 1 measured this exact Ship 30 essay task at 2,220 output tokens / 1,578 words, so a 2,048 cap TRUNCATES a verbose essay -- in the container only, since a host models.json has no such cap. Prompt is ~2,000 tokens against the 8,192 window, so 3,072 output still fits with headroom.",
+          "maxTokens": 3072,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
       ]

@@ -1,7 +1,8 @@
 """Database models.
 
 Phase 2B covered conversation state: sessions and messages. Phase 3 adds the
-knowledge base: transcripts and chunks. Artifact tables arrive in Phase 7.
+knowledge base: transcripts and chunks. Phase 6 adds `essays`, the first
+generated artifact. Phase 7 adds its rendering policy, not another table.
 
 Session isolation is enforced structurally: every message row carries a
 NOT NULL session_id foreign key, and every read path filters on it.
@@ -113,6 +114,85 @@ class Message(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now())
 
     session: Mapped[Session] = relationship(back_populates="messages")
+
+
+class Essay(Base):
+    """One generated Ship 30 essay -- the first artifact this product produces.
+
+    Deliberately NOT a `messages` row with a `kind` column. An essay is not a
+    turn in the conversation: it must not appear in the transcript, must not
+    enter `retrieve_for_session`'s history, and needs to be addressable on its
+    own (`GET /api/essays/{id}`) because that is what the Artifact Viewer
+    renders. A discriminator would have given all three problems at once in
+    exchange for saving a table.
+
+    Every trust column the messages table carries is carried here too, for the
+    same reasons: `sources` so the citations survive a reload, `grounding` so a
+    failed verdict still retracts the essay after the reader refreshes, and
+    provider/model so a claim stays attributable to what produced it.
+    """
+
+    __tablename__ = "essays"
+    __table_args__ = (
+        CheckConstraint("word_count >= 0", name="ck_essays_word_count"),
+        Index("ix_essays_session_created", "session_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+
+    # The answer this essay was written from. SET NULL rather than CASCADE so
+    # deleting a single message cannot silently destroy a finished artifact;
+    # deleting the SESSION still takes both, which is the intended behaviour.
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # The essay's own H1 if it wrote one. Never invented on its behalf, hence
+    # nullable -- a missing title is a fact about the output, not a gap to fill.
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    markdown: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Explicit so Phase 7 can add rendered HTML without the stored bytes
+    # becoming ambiguous about what they are.
+    format: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="markdown", server_default="markdown")
+
+    # Measured after generation, never enforced by truncation.
+    word_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # The SESSION's provider/model -- immutable, so this is a true record of
+    # what wrote the essay rather than a snapshot of configuration.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    sources: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]")
+
+    # NULL means no verdict was recorded, which is not the same claim as a
+    # recorded PASS. Same distinction as messages.grounding.
+    grounding: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Provenance for the INSTRUCTIONS, not just the model. The digest pins the
+    # exact revision of SKILL.md that produced this essay, so a later change in
+    # house style stays attributable.
+    skill_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    skill_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    session: Mapped[Session] = relationship()
 
 
 class Transcript(Base):

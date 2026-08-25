@@ -209,3 +209,73 @@ button.ghost.danger:hover { color: var(--bad); border-color: var(--bad); }
 .artifact-body .dim { color: var(--dim); }
 .bar { position: relative; }
 .retry-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+
+/* ---------------------------------------------------------------------------
+   Phase 6 — Ship 30 essays
+   --------------------------------------------------------------------------- */
+
+/* The call to action on a verified answer. Deliberately quiet: writing an
+   essay is a deliberate act that costs minutes locally, not a primary path. */
+.essay-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-top: .6rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--line, #2a2a2a);
+}
+
+.artifact-meta {
+  font-size: .78rem;
+  opacity: .8;
+  margin-bottom: .5rem;
+}
+
+/* An essay that missed the ~1,250-word target. Warned, not corrected --
+   truncating would sever quotes and citation tags. */
+.artifact-meta .off-target { color: var(--warn, #d9a441); }
+
+/* The generated Markdown SOURCE, shown as escaped text. No markup is parsed
+   here and none will be until Phase 7 states an isolation policy. `pre` keeps
+   the Markdown's own line structure readable in the meantime. */
+.essay-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .82rem;
+  line-height: 1.55;
+  margin: .5rem 0;
+  padding: .75rem;
+  border-radius: 6px;
+  background: var(--panel, #141414);
+  border: 1px solid var(--line, #2a2a2a);
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+/* A retracted essay is struck through under its banner, exactly as a
+   retracted answer is. Same failure, same treatment, at a different length. */
+.essay-body.retracted-text {
+  opacity: .55;
+  text-decoration: line-through;
+}
+
+.artifact-history {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line, #2a2a2a);
+  padding-top: .6rem;
+}
+
+.artifact-history .row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: .78rem;
+  padding: .35rem .5rem;
+}
+
+.artifact-history .row.active {
+  background: var(--panel, #141414);
+  border-radius: 4px;
+}

@@ -17,7 +17,21 @@ const STATUS: Record<string, string> = {
   verifying: "Verifying against sources…",
 };
 
-export default function Message({ turn, onRetry }: { turn: Turn; onRetry?: () => void }) {
+export default function Message({
+  turn,
+  onRetry,
+  onWriteEssay,
+  essayBusy,
+  localProvider,
+}: {
+  turn: Turn;
+  onRetry?: () => void;
+  /** Present only when this turn is eligible to become an essay. */
+  onWriteEssay?: () => void;
+  essayBusy?: boolean;
+  /** True when the session's provider is local, where an essay takes minutes. */
+  localProvider?: boolean;
+}) {
   if (turn.role === "user") {
     return (
       <div className="msg user">
@@ -73,6 +87,22 @@ export default function Message({ turn, onRetry }: { turn: Turn; onRetry?: () =>
 
       {turn.grounding && turn.state !== "abstained" && (
         <GroundingBanner grounding={turn.grounding} />
+      )}
+
+      {/* Offered only on an answer that verified clean and cites evidence.
+          An abstention has nothing to write from, and a retracted answer must
+          not become the foundation of 1,250 more confident words. The server
+          re-checks both -- a hidden button is not an access control. */}
+      {onWriteEssay && (
+        <div className="essay-row">
+          <button className="ghost" onClick={onWriteEssay} disabled={essayBusy}>
+            {essayBusy ? "Writing…" : "Write a Ship 30 essay"}
+          </button>
+          <span className="hint">
+            ~1,250 words from these sources, on {turn.provider ?? "this session's model"}.
+            {localProvider && " Local generation typically takes several minutes."}
+          </span>
+        </div>
       )}
 
       {turn.error && (

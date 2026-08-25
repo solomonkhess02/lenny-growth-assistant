@@ -77,6 +77,46 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=32_000)
 
 
+class EssayCreate(BaseModel):
+    """A request to turn one existing answer into a Ship 30 essay.
+
+    One field, and it must stay that way for the same reason MessageCreate has
+    one: the provider belongs to the session, and a per-request override would
+    let an essay claim a model the session never ran. Everything else the
+    generator needs -- the question, the answer, the evidence -- is read from
+    the stored turn, not accepted from the caller, so a client cannot supply
+    evidence the system never retrieved.
+    """
+
+    source_message_id: uuid.UUID
+
+
+class EssayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    session_id: uuid.UUID
+    source_message_id: uuid.UUID | None = None
+    title: str | None = None
+    markdown: str
+    format: str = "markdown"
+    word_count: int
+
+    provider: str
+    model: str
+    latency_ms: int | None = None
+
+    # Same replay contract as MessageOut: a reopened essay shows the citations
+    # it was written from and the verdict it was given. `grounding is None`
+    # means no verdict was recorded, never a silent PASS.
+    sources: list[dict] = Field(default_factory=list)
+    grounding: dict | None = None
+
+    skill_name: str
+    skill_sha256: str
+    created_at: datetime
+
+
 class ProviderInfo(BaseModel):
     provider: str
     model: str
