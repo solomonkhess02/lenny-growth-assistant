@@ -17,3 +17,11 @@ httpx>=0.27,<1.0
 # vector serialisation across a driver boundary is exactly the kind of subtle
 # breakage that produces silently wrong retrieval.
 pgvector>=0.3,<1.0
+
+# Phase 7 (app/artifacts.py, docs/artifact-isolation.md): the artifact
+# sanitizer. Both resolve as prebuilt wheels on python:3.13-slim -- verified
+# 2026-08-26, markdown_it_py 4.2.0 (pure Python) and nh3 0.3.7
+# (manylinux_2_17_x86_64, a Rust/ammonia extension) -- so neither needs a
+# compiler in the runtime image.
+markdown-it-py>=3.0,<5.0
+nh3>=0.2,<0.4

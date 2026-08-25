@@ -76,6 +76,52 @@ def create_app() -> FastAPI:
         })
         return response
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        """Phase 7 (`docs/artifact-isolation.md`, decision D-4): the second,
+        client-side isolation layer around a rendered essay.
+
+        `frame-src 'self'` covers the sandboxed `srcdoc` iframe the Artifact
+        Pane renders into. `default-src 'self'` is the backstop for
+        everything else: no script, image or connection can be requested
+        cross-origin from the app document itself, regardless of what a
+        future page adds.
+
+        `style-src` carries `'unsafe-inline'` for one measured reason: a
+        `srcdoc` document does not merely consult its OWN `<meta>` CSP --
+        Chromium applies the embedder's policy to it too, and the stricter
+        of the two wins per directive. Verified in-browser: with
+        `style-src 'self'` here, the essay iframe's own typography
+        `<style>` block (in `ArtifactPane.tsx`'s `buildSrcDoc`) was
+        SILENTLY blocked, and the essay rendered in the unstyled browser
+        default rather than the intended dark/light theme -- a real
+        console CSP violation, not a hypothetical one. Inline STYLE is a
+        deliberately narrow loosening: it has no code-execution surface
+        (unlike `script-src`), and every other directive here -- including
+        `script-src 'self'`, `object-src 'none'` and `frame-ancestors
+        'none'` -- stays maximally strict. The rendered HTML inside the
+        frame remains the nh3-sanitized allowlist regardless; this only
+        lets the CSS around it actually apply.
+
+        Known gap, documented rather than silently accepted: these headers
+        come from this FastAPI response, so they cover the built app served
+        at :8000 (the `docker compose up` / demo path) and NOT the Vite dev
+        server on :5173, which injects its own <style> tags. See
+        docs/artifact-isolation.md.
+        """
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'; frame-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; "
+            "object-src 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        return response
+
     register_error_handlers(app)
 
     api = "/api"

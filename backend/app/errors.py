@@ -109,6 +109,39 @@ class ProviderMisconfigured(AppError):
     message = "The selected model provider is not configured correctly."
 
 
+class ArtifactRenderFailed(AppError):
+    """The sanitizer itself raised. A bug in `app.artifacts`, not a policy
+    decision — the caller falls back to the escaped-source view either way.
+    """
+
+    code = "artifact_render_failed"
+    http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+    message = "The artifact could not be rendered."
+
+
+class ArtifactUnsafe(AppError):
+    """The post-render re-scan in `app.artifacts` matched something the nh3
+    allowlist should already have removed. Expected to never fire; it exists
+    so a sanitizer regression fails closed instead of reaching a reader.
+    """
+
+    code = "artifact_unsafe"
+    http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+    message = "The artifact failed a post-render safety check."
+
+
+class ArtifactTooLarge(AppError):
+    code = "artifact_too_large"
+    http_status = status.HTTP_413_CONTENT_TOO_LARGE
+    message = "The artifact exceeds the size limit for rendering."
+
+
+class ArtifactUnsupportedFormat(AppError):
+    code = "artifact_unsupported_format"
+    http_status = _HTTP_422
+    message = "That artifact format is not supported."
+
+
 def envelope(code: str, message: str, *, retryable: bool = False,
              details: dict | None = None) -> dict:
     body: dict[str, Any] = {

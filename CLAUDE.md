@@ -12,17 +12,23 @@ evaluator must be able to clone and run it from the documented steps alone.
 
 ## Current status — read before planning any work
 
-**Phases 1–6 are complete and verified.** Backend, transcript ingestion, deterministic
+**Phases 1–7 are complete and verified.** Backend, transcript ingestion, deterministic
 retrieval, grounding verification, the Pi agent layer, the Docker agent path, the Phase 5 chat
-UI and Phase 6 Ship 30 essays all ship (326 passed, 0 skipped on the host; 324 passed, 2 skipped
-in the runtime image, as of 2026-08-25).
+UI, Phase 6 Ship 30 essays and Phase 7 artifact isolation all ship (**385 passed, 0 skipped on
+the host; 379 passed, 6 skipped in the runtime image**, verified 2026-08-26 against a freshly
+built container — the 6 skips are packaging tests that read files deliberately absent from the
+image: `Dockerfile`/`.dockerignore` (2, since Phase 4.6) and `frontend/src/**` (4, new in Phase 7
+— the image ships only the built `dist/`), all loud and reasoned, never a silent pass).
+
+**There is no `README.md`.** The repo renders bare, and the assignment requires an evaluator to
+clone and run from the documented steps alone — gap #1 in the matrix, and the deadline in the
+header above is **26 August 2026**.
 
 **Do not redo a completed phase unless a regression is demonstrated** — reproduce it first,
 then fix it.
 
-**Phase 7 is next: artifact isolation** — the Artifact Pane currently renders essays as escaped
-text and must not render markup before that policy exists. Then failure-mode hardening (8),
-README/PRD/design.md/architecture.md/demo video (9).
+**Phase 8 is next: failure-mode hardening.** Then README/PRD/design.md/architecture.md/demo
+video (9).
 
 **Phase 5 locked three semantics that later phases must not undo:**
 
@@ -49,6 +55,25 @@ README/PRD/design.md/architecture.md/demo video (9).
 - **The word target is measured and reported, never enforced.** Truncating would sever quotes and
   citation tags mid-sentence, turning verified prose into a fabrication.
 
+**Phase 7 locked three more:**
+
+- **Sanitize AND isolate, not either.** `app/artifacts.py` (`markdown-it-py` with `html=False`,
+  then `nh3` against an explicit allowlist) is the server-side gate; the Artifact Pane's
+  `<iframe sandbox="">` — no `allow-scripts`, no `allow-same-origin` — is the client-side one. A
+  sanitizer bug is contained by the sandbox; a sandbox typo is contained by the sanitizer. See
+  [docs/artifact-isolation.md](docs/artifact-isolation.md) (decision D-4).
+- **A retracted essay is never rendered rich.** Not defaulted away from formatting — the toggle
+  itself is disabled, so rendering a known fabrication with polish is not merely discouraged, it
+  is unreachable. Same rule as Phase 6's server-side refusal to *write* an essay from a failed
+  answer.
+- **A `srcdoc` iframe inherits the embedder's CSP, measured, not assumed.** A strict app-level
+  `style-src 'self'` silently blocked the essay frame's own typography — caught by a real
+  in-browser console violation, not reasoned about in the abstract. Fixed by loosening `style-src`
+  alone to `'self' 'unsafe-inline'`; `script-src` and everything else stayed maximally strict.
+  Before touching CSP directives again, read
+  [docs/artifact-isolation.md §3](docs/artifact-isolation.md) — the failure mode is silent and
+  only shows up as unstyled output, not an error.
+
 **Measured 2026-08-25 — do not re-litigate without new data.** `qwen3:4b-instruct` is not
 reliable for long-form Ship 30: **0 of 12 local essays passed verification** at n=3 per question,
 ~20% per-quote fabrication, while every *short answer* on the same model, evidence and verifier
@@ -66,8 +91,9 @@ live TODO list. The Artifact Viewer is split across two rows on purpose: integra
 Phase 5, done) and rendering/isolation (Phase 7, not started).
 
 Reasoning lives in [docs/](docs/) — `agent-framework-comparison.md`, `agent-layer-decision.md`,
-`retrieval-calibration.md`, `ship30-essays.md`. Work happens on a phase branch
-(`phase-6-ship30`), commits read `feat(phase-N): …`, matrix updated in the same commit.
+`retrieval-calibration.md`, `ship30-essays.md`. Work happens on a phase branch — Phase 6 is
+merged and `main` is checked out, so Phase 7 opens its own. Commits read `feat(phase-N): …`,
+matrix updated in the same commit.
 
 ## Commands
 
@@ -97,7 +123,10 @@ cd frontend && npm run dev                        # Vite on :5173, proxies /api 
 cd frontend && npm run build                      # tsc -b + vite -> frontend/dist (Docker copies it to app/static)
 ```
 
-Tests, ingestion, migrations, calibration — all from `backend/`:
+Tests, ingestion, migrations, calibration — all from `backend/`, **with `.venv` activated**.
+The bare `python` on PATH is not it and fails on `import sqlalchemy`; without activating, spell
+the interpreter out — `./.venv/Scripts/python.exe -m pytest -q` (Windows) or
+`./.venv/bin/python -m pytest -q`.
 
 ```bash
 python -m pytest -q                                       # whole suite
@@ -132,6 +161,8 @@ routers/chat.py   transport only — SSE framing, no queries, no provider decisi
     grounding.py  quote/citation verification
   ship30.py       essay generation — content transformation, NOT another
                   branch inside agent.py (skill 03 separates the two)
+  artifacts.py    Phase 7 render boundary — pure function, no I/O; the ONLY
+                  place untrusted Markdown becomes HTML (see below)
 ```
 
 **Two invariants in [backend/app/agent.py](backend/app/agent.py) are structural, not prompted:**
@@ -155,7 +186,12 @@ custom `deepseek` entry shadows the built-in and breaks credential resolution (m
 of this essay task (2,220 output tokens); 2,048 truncates.
 
 **Configuration.** [backend/app/config.py](backend/app/config.py) is the *only* place
-environment is read — nothing else may call `os.environ`. `Settings.redacted()` defines what is
+*configuration* is read — nothing else may call `os.environ` to obtain a setting. The one
+sanctioned exception is `PiRuntime.child_env()`
+([backend/app/pi_runtime.py](backend/app/pi_runtime.py)), which copies the parent environment to
+build the **subprocess** env and then pops `DEEPSEEK_API_KEY` so an ambient key can never leak
+into a provider that should not see it — it is credential isolation, not config reading, and
+must not be "fixed" into `config.py`. `Settings.redacted()` defines what is
 safe to log or return over HTTP. `env_file=(".env", "../.env")`, so a host run from `backend/`
 picks up the repo-root `.env`.
 
@@ -203,17 +239,27 @@ declining. Abstention on replayed history is *derived* (`sources == [] && ground
 sound only because of the "no evidence, no answer" invariant above.
 
 `useEssay.ts` reuses that same `TurnState` machine — an essay streams the same protocol — adding
-only an elapsed clock, since a ten-minute local generation without one is indistinguishable from a
-hang. `components/ArtifactPane.tsx` is Phase 7's surface: it renders `essay.markdown` as a React
-text child in `<pre>`, so the browser never parses it as markup. **0 `dangerouslySetInnerHTML`, 0
-`iframe`, 0 `innerHTML`, no Markdown library** is an asserted property with a matrix row behind
-it — Phase 7 changes it deliberately and must re-evidence that row.
+an elapsed clock (a ten-minute local generation without one is indistinguishable from a hang) and,
+once an essay reaches a terminal state or is replayed from history, a fetch of
+`GET /api/essays/{id}/render` for the Phase 7 sanitized view. The streaming path itself is
+untouched: `components/ArtifactPane.tsx` still shows `essay.markdown` as a React text child in
+`<pre>` while a turn is in flight — half-parsed Markdown is exactly where parser bugs live, so
+nothing is ever rendered before it is complete.
+
+Once complete, the pane offers a Formatted/Source toggle. **Formatted** is exactly one
+`<iframe sandbox="">` — no `allow-scripts`, no `allow-same-origin` — fed the sanitized HTML from
+`backend/app/artifacts.py` via `srcdoc`; **Source** is the original Phase 6 escaped-text `<pre>`,
+unchanged, and is what a retracted essay is confined to (the Formatted toggle is `disabled` for
+it, not merely defaulted away from). Still **0 `dangerouslySetInnerHTML`, 0 `innerHTML`** in the
+app document — the one `iframe` is the isolation boundary, not an exception to the rule that
+untrusted markup never enters the application document. Full policy, threat model and the
+CSP-inheritance gotcha that shaped it: [docs/artifact-isolation.md](docs/artifact-isolation.md).
 
 **API surface:** `/api/health`, `/api/health/live`, `/api/config`, `/api/providers[/check]`,
 `POST /api/providers/probe`, `/api/sessions` (CRUD + `/{id}/messages` + `/{id}/essays`),
-`/api/essays/{id}`, `/api/retrieval/search`, `/api/retrieval/status`. `/api/health` reports real
-dependency state — DB down is `unhealthy` (503), provider down is `degraded` (200), because an
-operator needs to tell a broken deployment from an unstarted Ollama.
+`/api/essays/{id}`, `/api/essays/{id}/render`, `/api/retrieval/search`, `/api/retrieval/status`.
+`/api/health` reports real dependency state — DB down is `unhealthy` (503), provider down is
+`degraded` (200), because an operator needs to tell a broken deployment from an unstarted Ollama.
 
 ## Mandated stack (non-negotiable — from the assignment)
 

@@ -7,7 +7,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 - **Status key:** ✅ met with evidence · 🟡 partially met · ❌ measured and not met · ⬜ not started (phase not reached)
 - Test names are runnable: `cd backend && python -m pytest -k <name>`
-- Current suite: **332 passed, 0 failed, 0 skipped** on the host; **324 passed, 2 skipped** in the runtime image (2026-08-25, Phase 6). The 2 container skips are the packaging tests, which read `Dockerfile` / `.dockerignore` — files deliberately absent from the image.
+- Current suite: **385 passed, 0 failed, 0 skipped** on the host; **379 passed, 6 skipped** in the runtime image (2026-08-26, Phase 7). All 6 container skips read files deliberately absent from the image: `Dockerfile` / `.dockerignore` (2, since Phase 4.6) and `frontend/src/**` (4, new in Phase 7 — the image ships only the built `dist/`, so the frontend-isolation-invariant tests run on the host).
 
 ---
 
@@ -53,9 +53,9 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 | Q&A grounded in transcripts | Answerable → cited answer; unsupported → abstain | 38 eval + 22 agent tests; grounded answers on Ollama (24.2s) and DeepSeek (3.9s) | ✅ |
 | Ship 30 essay generation | ~1,250 words, correct structure | `tests/test_ship30.py` (30), `tests/test_essays.py` (23). **Live on the mandated path**: Ollama/`qwen3:4b-instruct` in the container, **1,338 words**, within target, 254.7 s. Repeated at n=3 per question: 12/12 essays produced on Ollama, median 1,165–1,189 words, all within target | ✅ Phase 6 — generation |
 | Ship 30 essays verify clean locally | A local essay passes grounding often enough to be usable | **0 of 12** Ollama essays passed at n=3 (~20% per-quote fabrication). Prompt mitigation measured and reverted — no verdict change. Model limit, documented not tuned away | ❌ **not met on Ollama** — gap 18 |
-| Artifact Viewer — integration | Pane present, open/close, empty + loading states | `frontend/src/components/ArtifactPane.tsx`; composer/scroll layout verified in-browser (M23, M24) | ✅ Phase 5 (layout/plumbing only) |
-| Artifact Viewer — rendering | Renders Markdown/HTML side by side | Phase 6 shows the essay as **escaped text** (React text node in `<pre>`) — no `dangerouslySetInnerHTML`, no `iframe`, no Markdown library in `package.json`. Formatting awaits the isolation policy | 🟡 content exists, rendering is Phase 7 |
-| Artifact isolation | Stated permit/block/strip policy | Decision D-4 recorded. Phase 5 renders **no** untrusted content — no `dangerouslySetInnerHTML`, no iframe — so the pane cannot outrun its policy | ⬜ Phase 7 |
+| Artifact Viewer — integration | Pane present, open/close, empty + loading states | `frontend/src/components/ArtifactPane.tsx`; composer/scroll layout re-verified in-browser against the Phase 7 sandboxed-iframe geometry (M22, M23, M24) | ✅ |
+| Artifact Viewer — rendering | Renders Markdown/HTML side by side | Phase 7: a verified essay renders formatted inside a sandboxed `srcdoc` iframe; a retracted essay stays escaped source. `backend/app/artifacts.py`, `tests/test_artifacts.py` (43), `tests/test_essays.py` (+5). Verified in-browser (M17) | ✅ |
+| Artifact isolation | Stated permit/block/strip policy | Decision D-4 recorded in [artifact-isolation.md](artifact-isolation.md). `sandbox=""` (no `allow-scripts`, no `allow-same-origin`) + server-side `nh3`/`markdown-it-py` sanitization + a strict app-level CSP, all three verified in-browser and by test | ✅ |
 
 ## §5 Resilience (failure modes)
 
@@ -108,14 +108,14 @@ Run after `docker compose up` on a clean checkout. Steps marked ⬜ depend on un
 | M14 | Follow-up question | Resolves against prior turn | ✅ at retrieval level |
 | M15 | New session | No bleed from previous session | ✅ verified |
 | M16 | Generate a Ship 30 essay on Ollama | ~1,250 words, renders | ✅ **verified 2026-08-25** — in-container on `qwen3:4b-instruct`: **1,338 words** (within the 1,000–1,500 band), 254.7 s, first token 53.2 s, 4 evidence items (2 carried + 2 added), `blockquote_lines: 0`, no `maxTokens` truncation. Verdict **FAIL** — 3 fabricated quotes of 8 checked, all wholly invented (longest matching prefix: one word) — so the essay was **retracted**, which is the local path behaving as Phase 1 predicted. **Repeated 2026-08-25 at n=3 per question: 6/6 essays produced, 6/6 retracted**, 16 fabricated of 72 checked — see [ship30-essays.md §10](ship30-essays.md) and gap 18 |
-| M17 | Script-bearing HTML artifact | Handled per stated policy | ⬜ Phase 7 |
+| M17 | Script-bearing HTML artifact | Handled per stated policy | ✅ **verified in-browser 2026-08-26** — a fixture essay with an inline `<script>`, an `onerror` handler, a `javascript:` link and an external image, rendered against the built image at `:8000`. App document: zero live-markup occurrences; exactly one `iframe`, `sandbox=""`, no `allow-scripts`/`allow-same-origin`. Inside the frame: no real `<script>` tag, payload present only as inert text, external image replaced by `[image removed]`, `[E1]` intact, 0 network requests to the fixture's external host, 0 JS `alert()` fired. See [artifact-isolation.md §6](artifact-isolation.md) |
 | M18 | Kill Ollama mid-request | Structured, legible, logged error | ⬜ Phase 8 |
 | M19 | Provider indicator matches the active session | Header names the session's provider + model, and its health | ✅ **verified in-browser** — deepseek session under `LLM_PROVIDER=ollama` shows `deepseek · deepseek-v4-pro`; a degraded session shows `ollama · qwen3:4b-instruct · unavailable` |
 | M20 | Retry does not change provider | Reissue stays on the session's provider | ✅ **verified in-browser** — provider unreachable; header identical before/after Retry; across every message stream the only provider named was `ollama`, never the healthy `deepseek` |
 | M21 | Citations/grounding replay after reload | Reload restores evidence and verdict | ✅ **verified in-browser** — post-reload view pixel-identical to live, incl. citations, 28.9 s latency and verdict |
-| M22 | Artifact pane layout / open / close | Pane renders, collapses, restores; no untrusted HTML | ✅ **verified in-browser** — empty state + Hide/Show; renders no generated content (Phase 7 owns isolation) |
-| M23 | Composer stays reachable | Composer visible without scrolling the page, with a long chat AND a long artifact | ✅ **verified in-browser 2026-08-25** against the built image at `:8000`. Before: `.artifact` 943px inside a 750px `.split`, `.chat` stretched to 943px, composer bottom **993px** against an 800px viewport, page `scrollHeight` 993. After: all three 750px, composer bottom **800**, `pageScrolls` false. Also 1440×900, 40-turn history, collapsed/restored, and the <1100px single-column path |
-| M24 | Chat and artifact scroll independently | Scrolling one does not move the other or the page | ✅ **verified in-browser** — artifact `scrollTop` 0 → 4,498 while chat held at 1,262 and `window.scrollY` stayed 0; `.artifact-body` `scrollHeight` 5,205 / `clientHeight` 707 |
+| M22 | Artifact pane layout / open / close | Pane renders, collapses, restores; no untrusted HTML | ✅ **re-verified in-browser 2026-08-26** — empty state + Hide/Show; a formatted essay now renders inside the sandboxed iframe (Phase 7), history sidebar lists multiple essays correctly |
+| M23 | Composer stays reachable | Composer visible without scrolling the page, with a long chat AND a long artifact | ✅ **verified in-browser 2026-08-25** (Phase 5/6 layout) and **re-verified 2026-08-26** after the Phase 7 sandboxed iframe changed the pane's internal scroll geometry (`artifacts.py §3`, no `allow-scripts`/`allow-same-origin` means nothing can auto-size the frame). At 1440×900 with 8 chat turns and a long multi-section essay: composer bottom **888px** (within the 900px viewport), page `scrollHeight` **900** (no page scroll) |
+| M24 | Chat and artifact scroll independently | Scrolling one does not move the other or the page | ✅ **verified in-browser 2026-08-25** (Phase 5/6) and **re-verified 2026-08-26** against the Phase 7 layout — artifact `scrollTop` 0 → 95 (its full range) while chat scroll and `window.scrollY` stayed unchanged |
 
 ## Phase 6 additions
 
@@ -356,3 +356,7 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
     Recommendation: keep the local path exactly as it behaves — a retracted essay is a working
     demonstration of the trust property — and demonstrate a passing essay on DeepSeek while
     stating that its passes often contain no quotations. See [ship30-essays.md §10](ship30-essays.md).
+19. **The artifact CSP is not applied to the Vite dev server.** Headers are set by the FastAPI
+    response, so they cover the built app at `:8000` — the `docker compose up` / demo path — and
+    not `npm run dev` on `:5173`, which injects its own `<style>` tags. Accepted, not fixed: the
+    evaluator-facing path is unaffected. See [artifact-isolation.md §3](artifact-isolation.md).

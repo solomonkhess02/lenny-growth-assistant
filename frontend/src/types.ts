@@ -76,9 +76,11 @@ export type SessionDetail = SessionSummary & { messages: StoredMessage[] };
  * still retracts the essay after a refresh, and provider/model/skill so the
  * artifact stays attributable to what wrote it.
  *
- * `markdown` is the raw generated source. It is rendered as ESCAPED TEXT in
- * Phase 6 -- never parsed to HTML, never injected. Phase 7 owns the isolation
- * policy that would let it be rendered.
+ * `markdown` is the raw generated source -- always shown as escaped text,
+ * the Phase 6 fallback view. A FORMATTED view is available separately via
+ * `GET /api/essays/{id}/render` (see `EssayRender` below): the Phase 7
+ * boundary sanitizes it server-side and the pane isolates it in a
+ * `sandbox=""` iframe. `markdown` itself is never parsed client-side.
  */
 export type Essay = {
   id: string;
@@ -97,6 +99,34 @@ export type Essay = {
   skill_sha256: string;
   created_at: string;
 };
+
+/**
+ * The response from `GET /api/essays/{id}/render` -- the Phase 7 boundary.
+ *
+ * `rendered: false` is not an error. It is either policy (a retracted essay
+ * is never rendered rich -- `reason: "retracted"`) or, defensively, a
+ * missing verdict (`reason: "ungrounded"`, not expected to occur for a
+ * persisted essay). An actual rendering failure -- oversized input, an
+ * unsupported format, the sanitizer faulting, or its own post-render safety
+ * re-scan tripping -- surfaces as an HTTP error instead, via the same
+ * `error.code` envelope everything else in this app uses, and the pane
+ * falls back to the escaped-source view either way.
+ */
+export type EssayRender =
+  | {
+      essay_id: string;
+      rendered: true;
+      html: string;
+      blocked: number;
+      stripped: number;
+      policy_version: string;
+    }
+  | {
+      essay_id: string;
+      rendered: false;
+      reason: "retracted" | "ungrounded";
+      policy_version: string;
+    };
 
 /** The terminal payload of an essay stream. */
 export type EssayDone = {
@@ -136,6 +166,18 @@ export type EssayView = {
   /** Wall-clock since the request started. A 10-minute local generation needs
    *  to look like progress rather than a hang. */
   elapsedMs?: number;
+  /** Fetched once the essay is `done`/`retracted`/replayed. Absent while
+   *  still streaming (the Phase 7 boundary only renders a COMPLETE essay --
+   *  half-parsed Markdown is where parser bugs live) or before the fetch
+   *  resolves. Either way the pane stays on the escaped-source view until
+   *  this is a `rendered: true` result. */
+  render?: EssayRender;
+  /** Set instead of `render` when the render endpoint itself refused (an
+   *  oversized artifact, an unsupported format, a sanitizer fault) or was
+   *  unreachable. Fail-closed means the source view is shown either way --
+   *  this is what lets the pane also NAME the reason rather than silently
+   *  degrading, per skill 06. */
+  renderError?: StreamError;
 };
 
 export type ProviderList = {

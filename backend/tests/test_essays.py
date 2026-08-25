@@ -470,3 +470,113 @@ async def test_protocol_order_matches_the_chat_protocol(client, session_id,
     # Citations before text; verification after it. Same reasons as chat.
     assert kinds.index("sources") < kinds.index("delta")
     assert kinds.index("grounding") > kinds.index("delta")
+
+
+# --------------------------------------------------------------------------
+# Phase 7 -- GET /api/essays/{id}/render, the artifact isolation boundary.
+#
+# `stub_generation` controls the exact Markdown a "generated" essay contains
+# (see its definition above), which is what lets these tests pin untrusted
+# content -- a citation tag, a quote, a script tag, a link -- and assert on
+# what the render endpoint does with it, without a live model.
+# --------------------------------------------------------------------------
+
+async def test_unknown_essay_render_is_structured_404(client):
+    r = await client.get(f"/api/essays/{uuid.uuid4()}/render")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "not_found"
+
+
+async def test_verified_essay_renders_sanitized_html(client, session_id,
+                                                      stub_generation):
+    # "loss aversion is powerful" is a literal substring of the stub
+    # evidence's text ("Streaks work because loss aversion is powerful."),
+    # so grounding passes and the essay is eligible for a rich render.
+    stub_generation["markdown"] = (
+        '# A Title\n\nHe said "loss aversion is powerful" about growth [E1].\n\n'
+        '<script>alert(1)</script>\n'
+    )
+    msg_id = await _seed_answer(client, session_id)
+    _, raw = await _post_essay(client, session_id, msg_id)
+    essay_id = parse_sse(raw)[-1][1]["essay_id"]
+
+    r = await client.get(f"/api/essays/{essay_id}/render")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    body = r.json()
+
+    assert body["rendered"] is True
+    assert body["essay_id"] == essay_id
+    assert "policy_version" in body
+    assert isinstance(body["blocked"], int)
+    assert isinstance(body["stripped"], int)
+
+    html = body["html"]
+    assert "<h1>A Title</h1>" in html
+    assert "[E1]" in html
+    assert "loss aversion is powerful" in html
+    # The trust boundary itself: no live markup, regardless of what the
+    # essay's own Markdown source contained.
+    assert "<script" not in html.lower()
+    assert "alert(1)" not in html or "&lt;script&gt;" in html
+
+
+async def test_retracted_essay_is_never_rendered_rich(client, session_id,
+                                                       stub_generation):
+    """A FAILED verdict must not get a formatted render -- polish is a
+    credibility signal, and withholding it from a known fabrication is the
+    same rule that refuses to WRITE an essay from a failed answer at all.
+    """
+    stub_generation["markdown"] = (
+        '# T\n\nHe said "a sentence in no transcript anywhere". [E9]\n')
+
+    msg_id = await _seed_answer(client, session_id)
+    _, raw = await _post_essay(client, session_id, msg_id)
+    done = parse_sse(raw)[-1][1]
+    assert done["trustworthy"] is False
+    essay_id = done["essay_id"]
+
+    r = await client.get(f"/api/essays/{essay_id}/render")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rendered"] is False
+    assert body["reason"] == "retracted"
+    assert "html" not in body
+
+
+async def test_render_preserves_multiple_citation_tags_and_quotes(
+        client, session_id, stub_generation):
+    stub_generation["markdown"] = (
+        '# Distribution Is the Game\n\n'
+        'He explained that **"loss aversion is powerful"** [E1].\n\n'
+        '## Section Two\n\n'
+        'The evidence backs this claim too [E1].\n'
+    )
+    msg_id = await _seed_answer(client, session_id)
+    _, raw = await _post_essay(client, session_id, msg_id)
+    essay_id = parse_sse(raw)[-1][1]["essay_id"]
+
+    body = (await client.get(f"/api/essays/{essay_id}/render")).json()
+    assert body["rendered"] is True
+    html = body["html"]
+    assert html.count("[E1]") == 2
+    assert "loss aversion is powerful" in html
+
+
+async def test_render_neutralizes_links_and_images(client, session_id,
+                                                    stub_generation):
+    stub_generation["markdown"] = (
+        '# T\n\n[a source](https://example.com/x) and '
+        '![pic](https://evil.example.com/beacon.png) [E1]\n'
+    )
+    msg_id = await _seed_answer(client, session_id)
+    _, raw = await _post_essay(client, session_id, msg_id)
+    essay_id = parse_sse(raw)[-1][1]["essay_id"]
+
+    body = (await client.get(f"/api/essays/{essay_id}/render")).json()
+    html = body["html"]
+    assert "<a" not in html
+    assert "<img" not in html
+    assert "evil.example.com" not in html
+    assert "[image removed]" in html
+    assert body["stripped"] == 2

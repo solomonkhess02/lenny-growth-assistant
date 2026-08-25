@@ -296,3 +296,37 @@ button.ghost.danger:hover { color: var(--bad); border-color: var(--bad); }
   background: var(--panel, #141414);
   border-radius: 4px;
 }
+
+/* ---------------------------------------------------------------------------
+   Phase 7 -- artifact isolation and rendering
+   --------------------------------------------------------------------------- */
+
+.artifact-view-toggle {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 6px 0;
+}
+.row-toggle { padding: 2px 8px; }
+.row-toggle.active { color: var(--fg); border-color: var(--accent); }
+.row-toggle:disabled { opacity: .4; cursor: not-allowed; }
+
+/*
+ * The sandboxed essay frame. No inner cap on purpose (matches .essay-body):
+ * .artifact-body is the pane's single scroll region. With neither
+ * allow-scripts nor allow-same-origin, nothing -- not the parent, not the
+ * child -- can measure the frame's content height, so it fills the pane
+ * body and scrolls INSIDE ITSELF instead. That is a deliberate change from
+ * Phase 5/6's single-scroll-region layout (M23/M24), not an oversight --
+ * it is the direct, load-bearing consequence of the sandbox attributes
+ * that make the frame safe. See docs/artifact-isolation.md.
+ */
+.essay-frame {
+  display: block;
+  width: 100%;
+  min-height: 60vh;
+  margin: .5rem 0;
+  border: 1px solid var(--line, #2a2a2a);
+  border-radius: 6px;
+  background: var(--panel, #141414);
+}
+
+.artifact-render-note { margin: 4px 0 0; }

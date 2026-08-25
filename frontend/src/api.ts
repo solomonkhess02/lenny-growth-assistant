@@ -8,8 +8,8 @@
  * and a "helpful" client retry is exactly how such a property gets lost.
  */
 import type {
-  Essay, Health, ProviderHealth, ProviderList, SessionDetail, SessionSummary,
-  StreamError,
+  Essay, EssayRender, Health, ProviderHealth, ProviderList, SessionDetail,
+  SessionSummary, StreamError,
 } from "./types";
 
 export class ApiError extends Error {
@@ -68,6 +68,18 @@ export const createSession = (provider?: string) =>
 export const listEssays = (sessionId: string) =>
   json<Essay[]>(`/api/sessions/${sessionId}/essays`);
 export const getEssay = (id: string) => json<Essay>(`/api/essays/${id}`);
+
+/**
+ * The Phase 7 boundary: a sanitized, isolatable render of one essay.
+ *
+ * A rejection here (oversized artifact, unsupported format, a sanitizer
+ * fault) throws like any other `ApiError` -- the pane catches it and stays
+ * on the escaped-source view, which is the fail-closed contract. A
+ * `rendered: false` body is a normal 200, not a rejection: it means the
+ * policy declined on purpose (a retracted essay), not that anything failed.
+ */
+export const getEssayRender = (id: string) =>
+  json<EssayRender>(`/api/essays/${id}/render`);
 
 export type SseFrame = { event: string; data: any };
 

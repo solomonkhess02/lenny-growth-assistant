@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, listEssays, postEssay } from "./api";
+import { ApiError, getEssayRender, listEssays, postEssay } from "./api";
 import type { Essay, EssayView, Grounding, Source } from "./types";
 
 /** Rebuild a stored essay into the shape the pane renders. */
@@ -56,6 +56,39 @@ export function useEssay(sessionId: string | null) {
     }
   }, []);
 
+  /**
+   * Phase 7: fetch the sanitized render for one essay and attach it, but
+   * only if the pane is still showing that essay when the fetch resolves --
+   * otherwise a slow render for an essay the user has since navigated away
+   * from would land on whatever is showing now.
+   *
+   * A rejection (oversized artifact, unsupported format, a sanitizer fault,
+   * the render endpoint's own post-render safety re-scan tripping) is
+   * caught and kept as `renderError` rather than swallowed: the pane still
+   * falls back to the escaped-source view either way -- that IS the
+   * fail-closed contract -- but skill 06 also requires the REASON to be
+   * surfaced, not silently dropped.
+   */
+  const fetchRender = useCallback((essayId: string) => {
+    getEssayRender(essayId)
+      .then((render) => {
+        setEssay((prev) =>
+          prev && prev.id === essayId
+            ? { ...prev, render, renderError: undefined }
+            : prev);
+      })
+      .catch((e: unknown) => {
+        const err =
+          e instanceof ApiError
+            ? { code: e.code, message: e.message, retryable: e.retryable }
+            : { code: "network_error", message: String(e), retryable: true };
+        setEssay((prev) =>
+          prev && prev.id === essayId
+            ? { ...prev, render: undefined, renderError: err }
+            : prev);
+      });
+  }, []);
+
   // Existing essays for this session, so a reload does not lose one that cost
   // ten minutes to produce.
   useEffect(() => {
@@ -68,7 +101,10 @@ export function useEssay(sessionId: string | null) {
       .then((rows) => {
         if (cancelled) return;
         setHistory(rows);
-        if (rows.length > 0) setEssay(toView(rows[0]));
+        if (rows.length > 0) {
+          setEssay(toView(rows[0]));
+          fetchRender(rows[0].id);
+        }
       })
       .catch(() => {
         // A failure to list old essays must not break the page; the pane
@@ -77,7 +113,7 @@ export function useEssay(sessionId: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, fetchRender]);
 
   useEffect(() => stopClock, [stopClock]);
 
@@ -157,6 +193,10 @@ export function useEssay(sessionId: string | null) {
             if (sessionId) {
               listEssays(sessionId).then(setHistory).catch(() => {});
             }
+            // Fire-and-forget: the essay is already `done`/`retracted`
+            // per the TurnState machine above, unchanged by whether this
+            // resolves, fails, or is still in flight.
+            fetchRender(data.essay_id);
           }
         }
       } catch (e) {
@@ -174,11 +214,17 @@ export function useEssay(sessionId: string | null) {
         setBusy(false);
       }
     },
-    [sessionId, busy, patch, stopClock],
+    [sessionId, busy, patch, stopClock, fetchRender],
   );
 
   const stop = useCallback(() => abort.current?.abort(), []);
-  const show = useCallback((row: Essay) => setEssay(toView(row)), []);
+  const show = useCallback(
+    (row: Essay) => {
+      setEssay(toView(row));
+      fetchRender(row.id);
+    },
+    [fetchRender],
+  );
 
   return { essay, history, busy, generate, stop, show };
 }

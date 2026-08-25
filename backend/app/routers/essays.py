@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import artifacts
 from .. import repository as repo
 from ..db import get_session, session_factory
 from ..errors import AppError, NotFoundError, ResourceConflict, ValidationFailed
@@ -252,3 +253,55 @@ async def get_essay(
     essay_id: uuid.UUID, db: AsyncSession = Depends(get_session)
 ) -> Essay:
     return await repo.load_essay(db, essay_id)
+
+
+@router.get("/essays/{essay_id}/render")
+async def render_essay(
+    essay_id: uuid.UUID, db: AsyncSession = Depends(get_session)
+) -> dict:
+    """The Phase 7 boundary: turn a stored essay's Markdown into sanitized,
+    isolatable HTML for the Artifact Pane's sandboxed iframe.
+
+    JSON, not `text/html` -- an HTML response would be navigable at its own
+    same-origin URL, which is the one response shape that could turn a
+    sanitizer miss into stored XSS rather than an inert JSON string.
+
+    Two distinct "not rendered" outcomes, deliberately not collapsed:
+
+      - A retracted essay returns 200 with `rendered: false` and a reason.
+        This is the policy working, not a failure -- the same distinction
+        Phase 5 draws between `retracted` and `error` for a chat turn.
+        Rendering is never even attempted, so a fabrication gets no chance
+        at a "safely sanitized" rich render.
+      - `artifacts.render()` raising is an actual refusal (oversized input,
+        unsupported format, a sanitizer fault, or the post-render safety
+        re-scan tripping) and surfaces as the structured error envelope via
+        the registered `AppError` handler, which also logs it.
+    """
+    essay = await repo.load_essay(db, essay_id)
+
+    grounded = bool(essay.grounding and essay.grounding.get("grounded"))
+    if not grounded:
+        reason = "retracted" if essay.grounding else "ungrounded"
+        log.info("artifact_render_skipped", extra={
+            "essay_id": str(essay_id), "reason": reason})
+        return {
+            "essay_id": str(essay_id),
+            "rendered": False,
+            "reason": reason,
+            "policy_version": artifacts.POLICY_VERSION,
+        }
+
+    result = artifacts.render(essay.markdown, format=essay.format)
+    log.info("artifact_rendered", extra={
+        "essay_id": str(essay_id), "format": essay.format,
+        "blocked": result.blocked, "stripped": result.stripped,
+        "policy_version": result.policy_version})
+    return {
+        "essay_id": str(essay_id),
+        "rendered": True,
+        "html": result.html,
+        "blocked": result.blocked,
+        "stripped": result.stripped,
+        "policy_version": result.policy_version,
+    }

@@ -41,6 +41,29 @@ async def test_unknown_route_is_structured(client):
     assert r.json()["error"]["code"] == "not_found"
 
 
+async def test_security_headers_are_present_on_every_response(client):
+    """Phase 7 (docs/artifact-isolation.md, D-4): the app-document half of
+    the artifact isolation strategy. `frame-src 'self'` is what lets the
+    Artifact Pane's sandboxed srcdoc iframe render at all under this policy.
+    """
+    r = await client.get("/api/health/live")
+    csp = r.headers["content-security-policy"]
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "frame-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "object-src 'none'" in csp
+    # Deliberately loosened, and only this one directive: a `srcdoc` frame
+    # applies the EMBEDDER's CSP in addition to its own <meta> policy, so a
+    # strict `style-src 'self'` here silently blocked the essay iframe's own
+    # typography <style> block (verified in-browser, not hypothetical).
+    # `script-src` stays plain `'self'` -- this is a style-only exception.
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+
+
 async def test_every_response_carries_a_request_id(client):
     r = await client.get("/api/health/live")
     assert r.headers.get("x-request-id")
