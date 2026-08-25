@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     embedding_model: str = "all-minilm"
     embedding_dim: int = 384
 
+    # --- agent framework: Pi Coding Agent (Phase 4 adoption) ----------------
+    # §3.1 agent layer. Chosen over the Claude Agent SDK by measurement:
+    # 111 tokens of harness overhead vs 24,472 against a locked 8,192 context.
+    pi_cli_path: str = "pi"
+
+    # Pi discovers and injects project context files (CLAUDE.md, AGENTS.md)
+    # from its working directory. Measured: running from the repo root added
+    # 1,311 tokens to EVERY request. Empty string -> a dedicated directory
+    # under the system temp root, which is never the repository.
+    pi_working_dir: str = ""
+
     # --- retrieval (Phase 3) -------------------------------------------------
     # Number of chunks fed to the model. ~3 is a UX decision, not a guess:
     # Phase 1 measured 30 of a 48s local answer as prompt processing at
@@ -104,6 +115,9 @@ class Settings(BaseSettings):
             "retrieval_k": self.retrieval_k,
             "retrieval_min_similarity": self.retrieval_min_similarity,
             "retrieval_max_per_source": self.retrieval_max_per_source,
+            "agent_framework": "pi",
+            "pi_cli_path": self.pi_cli_path,
+            "pi_working_dir": self.pi_working_dir or "(system temp)",
             "log_level": self.log_level,
         }
 

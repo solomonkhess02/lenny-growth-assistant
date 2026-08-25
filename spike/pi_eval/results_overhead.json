@@ -1,0 +1,56 @@
+[
+ {
+  "name": "A_floor_notools_minsys",
+  "args": "--no-tools --no-prompt-templates --system-prompt Answer briefly.",
+  "seconds": 155.2,
+  "input_tokens": 1422,
+  "output_tokens": 4,
+  "answer": "BANANA",
+  "error": null
+ },
+ {
+  "name": "B_notools_minsys_templates_on",
+  "args": "--no-tools --system-prompt Answer briefly.",
+  "seconds": 48.3,
+  "input_tokens": 1422,
+  "output_tokens": 4,
+  "answer": "BANANA",
+  "error": null
+ },
+ {
+  "name": "C_notools_default_sysprompt",
+  "args": "--no-tools --no-prompt-templates",
+  "seconds": 17.8,
+  "input_tokens": 1768,
+  "output_tokens": 4,
+  "answer": "BANANA",
+  "error": null
+ },
+ {
+  "name": "D_builtin_tools_default_sysprompt",
+  "args": "--no-prompt-templates",
+  "seconds": 23.7,
+  "input_tokens": 2755,
+  "output_tokens": 41,
+  "answer": "I can't say \"BANANA\" as it doesn't follow any instruction or requirement within the project context. Let me know if you'",
+  "error": null
+ },
+ {
+  "name": "E_tools_restricted_read_only",
+  "args": "--no-prompt-templates --tools read",
+  "seconds": 14.6,
+  "input_tokens": 2046,
+  "output_tokens": 25,
+  "answer": "I can't say \"BANANA\" as per the instructions. Let me know how else I can assist you!",
+  "error": null
+ },
+ {
+  "name": "F_rag_realistic_notools",
+  "args": "--no-tools --no-prompt-templates --system-prompt You answer product and growth questions using ONLY the numbered evidence provided by the user's message. The evidence comes from transcripts of Lenny's Podcast.\n\nRules, in order of importance:\n\n1. Use ONLY the provided evidence. If it does not contain the answer, say so plainly. Never rely on your own knowledge of the subject.\n2. Cite with square-bracket tags that match the evidence numbers exactly: [E1], [E2]. NEVER cite a number that was not provided to you.\n3. If you quote, the quoted words must appear VERBATIM in the evidence. Do not paraphrase inside quotation marks. If you cannot quote exactly, do not use quotation marks at all.\n4. Never invent a speaker, an episode title, a company, or a statistic that is not in the evidence.\n5. Be direct and concrete. Lead with the answer. Keep it under 250 words unless the question genuinely needs more.\n",
+  "seconds": 2.3,
+  "input_tokens": null,
+  "output_tokens": null,
+  "answer": "",
+  "error": "{\"type\":\"session\",\"version\":3,\"id\":\"01a035e1-2f7a-7dbb-ba5f-d90fb6139c8a\",\"timestamp\":\"2026-08-24T22:25:45.338Z\",\"cwd\":\"D:\\\\IIT CODES\\\\PROJECTS\\\\Oogway Labs Assignment\\\\spike\\\\pi_eval\"}\n"
+ }
+]

@@ -1,0 +1,26 @@
+{
+  "_comment": "Pi Coding Agent provider config for the API container. Contains NO credentials and is safe to commit: apiKey below is the dummy string Ollama ignores. The DeepSeek key is supplied at runtime from the DEEPSEEK_API_KEY environment variable and is never written here.",
+  "_deepseek_note": "DeepSeek is deliberately ABSENT. It is a BUILT-IN Pi provider that resolves DEEPSEEK_API_KEY by exact provider name. Adding a custom provider named 'deepseek' here shadows the built-in and breaks credential resolution -- measured in Phase 4.5.",
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://host.docker.internal:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen3:4b-instruct",
+          "name": "Qwen3 4B Instruct (host-native Ollama)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 8192,
+          "maxTokens": 2048,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}

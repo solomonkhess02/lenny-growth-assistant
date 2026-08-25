@@ -4,10 +4,15 @@ Skill 04: business logic depends on this interface, never on a concrete
 provider. Selection is configuration only. Phase 1 proved the seam by serving
 both Ollama and DeepSeek from one function with zero application-code change.
 
-Phase 2B implements: the interface, config-driven selection, health checks,
-and streaming transport. The agent layer that *uses* stream() arrives in
-Phase 4 — the chat endpoint here streams a deterministic placeholder so the
-skeleton needs no model to run and tests stay hermetic.
+Phase 4 adoption: generation now runs through the **Pi Coding Agent**, the
+§3.1 agent framework. The seam itself is unchanged — `get_provider()` still
+selects by configuration and no business logic branches on provider identity.
+Pi is the execution engine *behind* both providers, which is why adopting it
+required no change to app/agent.py at all.
+
+Each provider therefore owns two things: how to health-check its own endpoint
+(direct HTTP, so a health probe never depends on the agent framework), and
+which Pi provider/model name it maps to.
 
 One pooled AsyncClient is shared process-wide. Per-request connections cost
 ~2s against `localhost` on Windows (IPv6 ::1 first-resolution) and are pure
@@ -25,6 +30,7 @@ import httpx
 
 from .config import Settings, get_settings
 from .errors import ProviderMisconfigured, ProviderUnavailable
+from .pi_runtime import PiRuntime
 
 log = logging.getLogger("app.providers")
 
@@ -62,20 +68,45 @@ class ModelProvider(abc.ABC):
     @abc.abstractmethod
     def base_url(self) -> str: ...
 
+    @property
+    @abc.abstractmethod
+    def pi_provider(self) -> str:
+        """Provider name as Pi knows it.
+
+        Must match Pi's own naming: `pi-ai/dist/env-api-keys.js` maps provider
+        name -> credential env var by exact string, so 'deepseek' resolves
+        DEEPSEEK_API_KEY. A mismatch here silently breaks authentication.
+        """
+
     @abc.abstractmethod
     async def check(self) -> dict:
         """Never raises. Returns a health dict describing real reachability."""
 
-    @abc.abstractmethod
-    def stream(self, prompt: str) -> AsyncIterator[str]:
-        """Yield text deltas. Raises ProviderUnavailable / ProviderMisconfigured."""
-
     def describe(self) -> dict:
-        return {"provider": self.name, "model": self.model, "base_url": self.base_url}
+        return {"provider": self.name, "model": self.model,
+                "base_url": self.base_url, "agent_framework": "pi",
+                "pi_provider": self.pi_provider}
+
+    def stream(self, prompt: str) -> AsyncIterator[str]:
+        """Generation runs through Pi for every provider.
+
+        Concrete providers do not override this. Keeping one implementation is
+        what makes "switch provider by configuration" true by construction
+        rather than by convention.
+        """
+        return PiRuntime(self.settings).stream(
+            pi_provider=self.pi_provider, model=self.model, prompt=prompt)
 
 
 class OllamaProvider(ModelProvider):
     name = "ollama"
+
+    @property
+    def pi_provider(self) -> str:
+        # Configured in ~/.pi/agent/models.json against 127.0.0.1 (never
+        # `localhost`: it resolves ::1 first and Ollama binds IPv4 only,
+        # costing ~2s on every new connection).
+        return "ollama"
 
     @property
     def model(self) -> str:
@@ -116,49 +147,16 @@ class OllamaProvider(ModelProvider):
         out["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         return out
 
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True,
-            "options": {"num_ctx": self.settings.ollama_context_length},
-        }
-        t0 = time.perf_counter()
-        try:
-            async with http_client().stream(
-                "POST", f"{self.base_url}/api/chat", json=payload
-            ) as r:
-                if r.status_code >= 400:
-                    body = (await r.aread()).decode(errors="replace")[:300]
-                    raise ProviderUnavailable(
-                        f"Ollama returned {r.status_code}.", status=r.status_code,
-                        body=body)
-                async for line in r.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        log.warning("ollama_malformed_line", extra={"line": line[:200]})
-                        continue
-                    if obj.get("error"):
-                        raise ProviderUnavailable(str(obj["error"]))
-                    delta = (obj.get("message") or {}).get("content", "")
-                    if delta:
-                        yield delta
-                    if obj.get("done"):
-                        break
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailable(
-                f"Ollama transport failure: {type(exc).__name__}") from exc
-        finally:
-            log.info("provider_stream_finished", extra={
-                "provider": self.name, "model": self.model,
-                "duration_ms": round((time.perf_counter() - t0) * 1000, 1)})
-
-
 class DeepSeekProvider(ModelProvider):
     name = "deepseek"
+
+    @property
+    def pi_provider(self) -> str:
+        # MUST be exactly "deepseek": Pi maps provider name -> DEEPSEEK_API_KEY
+        # by exact string. It is also a BUILT-IN Pi provider, so no
+        # models.json entry may be added for it -- a custom entry with this
+        # name shadows the built-in and breaks credential resolution.
+        return "deepseek"
 
     @property
     def model(self) -> str:
@@ -186,65 +184,6 @@ class DeepSeekProvider(ModelProvider):
             out["detail"] = f"Cannot reach {self.base_url} ({type(exc).__name__})."
         out["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         return out
-
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        if not self.settings.deepseek_api_key:
-            raise ProviderMisconfigured(
-                "DEEPSEEK_API_KEY is not set. Set it in .env, or switch "
-                "LLM_PROVIDER=ollama.")
-        payload: dict = {
-            "model": self.model,
-            "max_tokens": self.settings.deepseek_max_tokens,
-            "stream": True,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if self.settings.deepseek_disable_thinking:
-            # Phase 1: v4-pro thinks by default and a 29,995-char thinking
-            # block exhausted an 8192 budget, returning zero usable text.
-            payload["thinking"] = {"type": "disabled"}
-
-        headers = {
-            "x-api-key": self.settings.deepseek_api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-        t0 = time.perf_counter()
-        try:
-            async with http_client().stream(
-                "POST", f"{self.base_url}/v1/messages",
-                json=payload, headers=headers,
-            ) as r:
-                if r.status_code >= 400:
-                    body = (await r.aread()).decode(errors="replace")[:300]
-                    if r.status_code in (401, 403):
-                        raise ProviderMisconfigured(
-                            "DeepSeek rejected the API key.", status=r.status_code)
-                    raise ProviderUnavailable(
-                        f"DeepSeek returned {r.status_code}.",
-                        status=r.status_code, body=body)
-                async for line in r.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        continue
-                    try:
-                        obj = json.loads(data)
-                    except json.JSONDecodeError:
-                        log.warning("deepseek_malformed_sse", extra={"line": data[:200]})
-                        continue
-                    if obj.get("type") == "content_block_delta":
-                        delta = (obj.get("delta") or {}).get("text", "")
-                        if delta:
-                            yield delta
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailable(
-                f"DeepSeek transport failure: {type(exc).__name__}") from exc
-        finally:
-            log.info("provider_stream_finished", extra={
-                "provider": self.name, "model": self.model,
-                "duration_ms": round((time.perf_counter() - t0) * 1000, 1)})
-
 
 _REGISTRY: dict[str, type[ModelProvider]] = {
     "ollama": OllamaProvider,

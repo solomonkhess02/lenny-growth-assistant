@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.errors import ProviderMisconfigured, ProviderUnavailable
 from app.providers import (
     DeepSeekProvider, OllamaProvider, available_providers, get_provider,
@@ -51,14 +51,37 @@ def test_unknown_provider_is_misconfiguration_not_a_crash():
 def test_describe_exposes_selection_for_the_ui():
     p = OllamaProvider(_settings(ollama_model="qwen3:4b-instruct"))
     d = p.describe()
-    assert d == {"provider": "ollama", "model": "qwen3:4b-instruct",
-                 "base_url": "http://127.0.0.1:11434"}
+    # base_url is deployment-specific -- 127.0.0.1 on a host,
+    # host.docker.internal in the container -- so it is compared against the
+    # configuration rather than a literal. Everything else is a fixed contract.
+    assert d == {"provider": "ollama",
+                 "model": get_settings().ollama_model,
+                 "base_url": get_settings().ollama_base_url,
+                 # Phase 4: the UI must be able to say which agent framework
+                 # produced an answer, not just which model.
+                 "agent_framework": "pi", "pi_provider": "ollama"}
 
 
 def test_ollama_default_url_is_not_localhost():
     """Regression guard: `localhost` costs ~2s per connection on Windows."""
     assert "localhost" not in _settings().ollama_base_url
-    assert _settings().ollama_base_url == "http://127.0.0.1:11434"
+    # Test the SHIPPED DEFAULT, with the ambient environment and .env
+    # excluded. Reading the live config here made the test assert whatever the
+    # deployment happened to set -- which is why it passed on the host and
+    # failed in the container, where OLLAMA_BASE_URL is host.docker.internal.
+    # (This is the deferred Phase 2 finding M5, now closed.)
+    # Assert the DECLARED FIELD DEFAULT. `Settings(_env_file=None)` only
+    # disables the .env file -- it still reads the process environment, so in
+    # the container it picked up OLLAMA_BASE_URL=host.docker.internal and
+    # failed. The field default is the only environment-independent way to
+    # ask "what does this project ship as the default?".
+    assert (Settings.model_fields["ollama_base_url"].default
+            == "http://127.0.0.1:11434")
+
+    # And the invariant that actually matters in every deployment: the
+    # effective URL must never be `localhost`, which resolves ::1 first and
+    # costs ~2s per new connection against IPv4-only Ollama.
+    assert "localhost" not in _settings().ollama_base_url
 
 
 def test_database_url_gets_async_driver():
@@ -99,12 +122,30 @@ async def test_ollama_check_on_dead_host_is_actionable(monkeypatch):
     assert out["latency_ms"] >= 0
 
 
-async def test_ollama_stream_on_dead_host_raises_retryable():
-    p = OllamaProvider(_settings(ollama_base_url="http://127.0.0.1:1"))
-    with pytest.raises(ProviderUnavailable) as e:
-        async for _ in p.stream("hi"):
+async def test_unreachable_generation_backend_raises_retryable():
+    """Generation now runs through Pi, so the endpoint lives in Pi's own
+    models.json rather than in `ollama_base_url`.
+
+    `ollama_base_url` still governs the HEALTH CHECK, which is deliberate --
+    a health probe should not depend on the agent framework being installed.
+    But it no longer redirects generation, so this test drives the failure
+    through Pi's configuration instead.
+    """
+    from app.pi_runtime import PiRuntime
+
+    runtime = PiRuntime(_settings())
+    with pytest.raises((ProviderUnavailable, ProviderMisconfigured)) as e:
+        async for _ in runtime.stream(pi_provider="definitely-not-configured",
+                                      model="x", prompt="hi"):
             pass
-    assert e.value.retryable is True
+    assert e.value.http_status in (500, 503)
+
+
+async def test_health_check_still_honours_the_configured_url():
+    """The health path must remain independent of Pi."""
+    p = OllamaProvider(_settings(ollama_base_url="http://127.0.0.1:1"))
+    out = await p.check()
+    assert out["reachable"] is False
 
 
 async def test_provider_endpoints_report_selection(client):

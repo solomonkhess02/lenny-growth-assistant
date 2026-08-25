@@ -1,0 +1,5 @@
+CLEAN_floor                      "usage":{"input":111,"output":4        19s
+CLEAN_rag_ourprompt              "usage":{"input":1662,"output":222     52s
+CLEAN_rag_latency2               "usage":{"input":1662,"output":212     42s
+CLEAN_tools_default              "usage":{"input":1444,"output":11      28s
+ALLDONE

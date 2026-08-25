@@ -1,0 +1,8 @@
+### dead endpoint:
+Connection error.
+### exit=0
+### bad model id:
+Warning: Model "does-not-exist:99b" not found for provider "ollama". Using custom model id.
+404 model 'does-not-exist:99b' not found
+### exit=0
+ALLDONE_FAIL

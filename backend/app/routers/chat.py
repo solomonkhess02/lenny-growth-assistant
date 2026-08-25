@@ -1,28 +1,27 @@
-"""Streaming plumbing (SSE).
+"""Streaming chat (SSE).
 
-Requirement 1 of the locked Provider UX contract makes streaming baseline
-UX for every model request, so the transport is built into the skeleton
-rather than retrofitted in Phase 5.
+Phase 4 replaced the Phase 2B placeholder with the real agent layer. The
+event protocol grew but did not change shape: `meta` still arrives first and
+exactly one terminal event still ends the stream.
 
-Phase 2B streams a deterministic placeholder: no model is involved, so the
-skeleton runs and its tests pass without Ollama. Phase 4 replaces
-`_placeholder_stream` with the agent; the event protocol below does not
-change.
-
-Persistence goes through app.repository. This module previously imported
-data access from routers/sessions.py -- routers reaching into routers --
-which is how sequence allocation drifted away from the write that depends
-on it.
+Persistence goes through app.repository. This module builds no queries and
+makes no retrieval or provider decisions of its own -- it is transport.
 
 Event protocol (SSE `event:` / `data:` JSON):
-  meta   - session_id, user_seq, provider, model        (always first)
-  delta  - {"text": "..."} incremental content
-  done   - {"message_id", "seq", "latency_ms", "content_length"}
-  error  - {"code", "message", "retryable"}             (terminal)
+  meta      - session_id, user_seq, provider, model            (always first)
+  sources   - the evidence cards, sent BEFORE any text so the reader can see
+              what the answer will be built from
+  delta     - {"text": "..."} incremental content
+  grounding - verification verdict for the completed answer
+  done      - {"message_id", "seq", "latency_ms", "trustworthy", ...}
+  error     - {"code", "message", "retryable"}                 (terminal)
+
+`sources` precedes `delta` deliberately: citations are evidence the system
+retrieved, not claims the model made, so they are trustworthy before a single
+token is generated.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -34,6 +33,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import repository as repo
+from ..agent import stream_answer
 from ..db import get_session, session_factory
 from ..errors import AppError
 from ..logging_conf import request_id_var
@@ -43,23 +43,9 @@ from ..schemas import MessageCreate
 log = logging.getLogger("app.chat")
 router = APIRouter(prefix="/sessions", tags=["chat"])
 
-PLACEHOLDER_NOTICE = (
-    "[Phase 2B skeleton] Retrieval and generation are not wired yet. "
-    "This response is a deterministic placeholder that exercises the "
-    "streaming transport, session persistence, and provider seam. "
-    "You said: "
-)
-
 
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-async def _placeholder_stream(prompt: str) -> AsyncIterator[str]:
-    """Deterministic, model-free. Chunked so incremental delivery is provable."""
-    for word in (PLACEHOLDER_NOTICE + prompt).split(" "):
-        yield word + " "
-        await asyncio.sleep(0.01)
 
 
 @router.post("/{session_id}/messages")
@@ -73,8 +59,9 @@ async def post_message(
 
     # Persist the user turn and COMMIT before streaming. The generator below
     # runs after this handler returns and opens its own session; an
-    # uncommitted row would be invisible to it. Committing here also means a
-    # mid-stream disconnect cannot lose the user's message.
+    # uncommitted row would be invisible to it -- and to the follow-up
+    # retrieval that reads this session's history. Committing here also means
+    # a mid-stream disconnect cannot lose the user's message.
     user_msg = await repo.append_message(
         db, session_id, role="user", content=body.content)
     user_seq = user_msg.seq
@@ -84,22 +71,31 @@ async def post_message(
 
     async def generator() -> AsyncIterator[str]:
         t0 = time.perf_counter()
-        parts: list[str] = []
         yield sse("meta", {
             "session_id": str(session_id), "user_seq": user_seq,
             "provider": provider.name, "model": provider.model,
-            "request_id": rid, "phase": "2B-placeholder",
+            "request_id": rid,
         })
         try:
-            async for delta in _placeholder_stream(body.content):
-                if await request.is_disconnected():
-                    log.info("client_disconnected",
-                             extra={"session_id": str(session_id)})
-                    break
-                parts.append(delta)
-                yield sse("delta", {"text": delta})
+            final: dict = {}
+            grounding: dict = {}
 
-            content = "".join(parts).strip()
+            async with session_factory()() as read:
+                async for event, payload in stream_answer(
+                        read, body.content, session_id=session_id,
+                        provider=provider):
+                    if await request.is_disconnected():
+                        log.info("client_disconnected",
+                                 extra={"session_id": str(session_id)})
+                        return
+                    if event == "complete":
+                        final = payload
+                        continue
+                    if event == "grounding":
+                        grounding = payload
+                    yield sse(event, payload)
+
+            content = final.get("content", "").strip()
             latency = int((time.perf_counter() - t0) * 1000)
 
             async with session_factory()() as write:
@@ -114,14 +110,22 @@ async def post_message(
             log.info("assistant_message_persisted", extra={
                 "session_id": str(session_id), "seq": a_seq,
                 "provider": provider.name, "model": provider.model,
-                "duration_ms": latency, "outcome": "ok"})
+                "abstained": final.get("abstained"),
+                "trustworthy": final.get("trustworthy"),
+                "duration_ms": latency,
+                "outcome": "ok" if final.get("trustworthy") else "ungrounded"})
 
-            yield sse("done", {"message_id": msg_id, "seq": a_seq,
-                               "latency_ms": latency,
-                               "content_length": len(content)})
+            yield sse("done", {
+                "message_id": msg_id, "seq": a_seq, "latency_ms": latency,
+                "content_length": len(content),
+                "abstained": final.get("abstained", False),
+                "supported": final.get("supported", False),
+                "trustworthy": final.get("trustworthy", False),
+                "grounding": grounding,
+            })
 
         except AppError as exc:
-            # Status is already 200 — a mid-stream failure must be surfaced
+            # Status is already 200 -- a mid-stream failure must be surfaced
             # as a terminal event, never swallowed into a truncated success.
             log.warning("stream_failed", extra={
                 "session_id": str(session_id), "error_code": exc.code,

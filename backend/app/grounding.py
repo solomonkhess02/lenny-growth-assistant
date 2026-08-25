@@ -24,12 +24,18 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger("app.grounding")
 
-# Quotes shorter than this are usually ordinary emphasis ("north star" metric)
-# rather than an attributed quotation, and checking them produces noise.
-MIN_QUOTE_CHARS = 25
+# A quoted span is checked when it is at least this many words. Single words
+# in quotes are emphasis or scare-quotes ("retention"), not attribution.
+#
+# This used to be a 25-CHARACTER floor, inherited from the Phase 1 spike, and
+# it hid a real fabrication: DeepSeek attributed "golden goose" (12 chars) to
+# an episode that never says it, and grounding reported PASS because the span
+# was too short to examine. Punchy phrases are exactly what a model invents
+# and a reader repeats, so length is the wrong axis -- word count is not.
+MIN_QUOTE_WORDS = 2
 
 # Straight and curly double quotes; models emit both.
-QUOTE_RE = re.compile(r'["“]([^"“”]{%d,})["”]' % MIN_QUOTE_CHARS)
+QUOTE_RE = re.compile(r'["“]([^"“”]+)["”]')
 
 # Citation tags of the form [E1], [E2] ...
 TAG_RE = re.compile(r"\[(E\d+)\]")
@@ -109,7 +115,9 @@ def _haystack(evidence) -> str:
 
 
 def extract_quotes(answer: str) -> list[str]:
-    return QUOTE_RE.findall(answer or "")
+    """Quoted spans worth verifying: at least MIN_QUOTE_WORDS words."""
+    return [q for q in QUOTE_RE.findall(answer or "")
+            if len(q.split()) >= MIN_QUOTE_WORDS]
 
 
 def verify_answer(answer: str, evidence) -> QuoteReport:

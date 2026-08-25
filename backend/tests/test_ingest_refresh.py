@@ -30,6 +30,13 @@ pytestmark = pytest.mark.usefixtures("ollama_ready")
 REAL = Path(__file__).parents[2] / "data" / "transcripts" / "casey-winters.md"
 SLUG = "casey-winters"
 
+# Binary so no platform translates it. See
+# test_changed_transcript_leaves_no_stale_chunks.
+NEW_TURN = (
+    chr(10) * 2 + "Casey Winters (55:00):" + chr(10) * 2
+    + "A genuinely new closing thought appended by the test." + chr(10)
+).encode("utf-8")
+
 
 @pytest.fixture
 def staged(tmp_path, monkeypatch, _schema):
@@ -139,10 +146,23 @@ async def test_changed_transcript_leaves_no_stale_chunks(staged):
     await ingest_one(SLUG, sha(staged), embedder)
     old_id = (await stored()).id
 
-    text = staged.read_text(encoding="utf-8")
-    staged.write_text(text.replace("retention", "RETENTION-CHANGED"),
-                      encoding="utf-8")
-    await ingest_one(SLUG, sha(staged), embedder)
+    # Append a real new turn, in BINARY, so the change is unambiguous.
+    #
+    # The previous version did `text.replace("retention", ...)` -- but
+    # casey-winters.md contains ZERO occurrences of "retention", so the
+    # replace was a no-op and the content hash never changed. It passed on
+    # Windows only because read_text/write_text translate line endings
+    # (LF -> CRLF), which altered the bytes by accident. On Linux there is no
+    # translation: the file was byte-identical, the transcript was correctly
+    # SKIPPED, and this test's premise never held.
+    #
+    # Caught by running the suite inside the container. A binary append
+    # removes the platform dependency entirely.
+    with staged.open("ab") as fh:
+        fh.write(NEW_TURN)
+
+    result = await ingest_one(SLUG, sha(staged), embedder)
+    assert result.status == "ingested", "the appended turn did not change the hash"
 
     async with session_factory()() as db:
         orphans = await db.scalar(

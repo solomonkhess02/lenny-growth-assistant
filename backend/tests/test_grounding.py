@@ -14,7 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from app.grounding import extract_quotes, normalize, verify_answer
+from app.grounding import (
+    MIN_QUOTE_WORDS, extract_quotes, normalize, verify_answer,
+)
 
 SPIKE = Path(__file__).parents[2] / "spike"
 
@@ -57,8 +59,11 @@ def test_catches_the_real_phase1_fabrications(bench, evidence):
     """
     report = verify_answer(bench["qwen3:4b-instruct"]["C"]["text"], evidence)
     assert not report.grounded
-    assert report.quotes_found == 20, "curly-quoted spans must be examined"
-    assert len(report.fabricated_quotes) == 4
+    # 28/6 rather than the 20/4 first recorded: dropping the 25-character
+    # floor for a 2-word rule exposed two further fabrications in the same
+    # essay. See test_short_attributed_quote_is_checked.
+    assert report.quotes_found == 28, "curly-quoted spans must be examined"
+    assert len(report.fabricated_quotes) == 6
 
 
 def test_curly_quotes_are_examined():
@@ -143,14 +148,41 @@ def test_answer_without_quotes_or_tags_is_grounded(evidence):
     assert verify_answer("Retention matters a great deal.", evidence).grounded
 
 
-def test_short_quoted_phrases_are_ignored(evidence):
-    """'north star' is emphasis, not an attributed quotation."""
-    assert verify_answer('the "north star" metric', evidence).quotes_found == 0
+def test_single_word_emphasis_is_ignored(evidence):
+    """Scare-quotes around one word are emphasis, not attribution."""
+    assert verify_answer('the "retention" number', evidence).quotes_found == 0
+    assert MIN_QUOTE_WORDS == 2
+
+
+def test_short_attributed_quote_is_checked(evidence):
+    """Regression for a REAL fabrication the old threshold hid.
+
+    DeepSeek attributed "golden goose" (12 characters) to an episode that
+    never says it, and grounding reported PASS because the span fell under a
+    25-character floor. Punchy short phrases are exactly what a model invents
+    and a reader repeats, so length was the wrong axis.
+    """
+    report = verify_answer(
+        'He called it a "golden goose" for retention.', evidence)
+    assert report.quotes_found == 1, "short attributed quote was not examined"
+    assert report.fabricated_quotes == ["golden goose"]
+    assert not report.grounded
 
 
 def test_extract_quotes_handles_both_styles():
-    text = 'He said "' + "a" * 30 + '" and “' + "b" * 30 + '”.'
-    assert len(extract_quotes(text)) == 2
+    """Straight and curly spans are both examined."""
+    text = ('He said "growth is a distribution problem" '
+            'and she said “retention beats acquisition”.')
+    quotes = extract_quotes(text)
+    assert len(quotes) == 2
+    assert "growth is a distribution problem" in quotes
+    assert "retention beats acquisition" in quotes
+
+
+def test_extraction_is_by_word_count_not_length():
+    """A single long token is still one word, so still emphasis."""
+    assert extract_quotes('a "' + "x" * 40 + '" term') == []
+    assert extract_quotes('a "two words" term') == ["two words"]
 
 
 def test_normalize_is_idempotent():

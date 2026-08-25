@@ -1,0 +1,36 @@
+# Keep the build context small. Without this the daemon receives ~202 MB per
+# build, most of it backend/.venv (123 MB) which the image never uses.
+
+# Virtualenvs and dependency trees — rebuilt inside the image
+backend/.venv/
+.venv/
+**/node_modules/
+
+# Python bytecode and test caches
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Secrets never belong in a build context, image layer, or history.
+.env
+.env.*
+!.env.example
+
+# Version control and editor state
+.git/
+.gitignore
+.claude/
+.agents/
+
+# Spike artifacts: only the real transcripts and Phase 1 model output are used
+# as offline test fixtures. Everything else is bulky evidence.
+spike/pi_eval/
+spike/captures/
+spike/*.py
+
+# The assignment brief is not ours to redistribute (see .gitignore).
+*.docx
+
+# Local scratch
+*.log
+suite.txt

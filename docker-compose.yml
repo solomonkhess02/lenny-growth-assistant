@@ -39,6 +39,10 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      # MUST be pinned. The Dockerfile's last stage is `test`, and an
+      # unpinned build resolves to the last stage -- which shipped pytest as
+      # the API entrypoint instead of uvicorn.
+      target: runtime
     depends_on:
       db:
         condition: service_healthy
@@ -66,6 +70,13 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-minilm}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
 
+      # Pi agent framework. The CLI is installed in the image at /opt/pi/bin.
+      # PI_WORKING_DIR must stay OUTSIDE /srv: Pi injects project context files
+      # (CLAUDE.md, AGENTS.md) discovered from its working directory, and doing
+      # that from the app root would silently prepend them to every prompt.
+      PI_CLI_PATH: ${PI_CLI_PATH:-pi}
+      PI_WORKING_DIR: ${PI_WORKING_DIR:-/tmp/pi-workdir}
+
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000}
     ports:
@@ -81,6 +92,44 @@ services:
       retries: 12
       start_period: 20s
     restart: unless-stopped
+
+  # Container-side test runner. Behind a profile, so a normal
+  # `docker compose up` never starts it:
+  #     docker compose --profile test run --rm api-tests
+  #
+  # Builds the `test` stage, which extends the REAL runtime image -- so these
+  # tests exercise the same Pi install, same Node binary and same provider
+  # config that ship, not a parallel environment.
+  api-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: test
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny_dev_password}@db:5432/${POSTGRES_DB:-lenny}
+      # Scratch database -- the fixtures DROP ALL TABLES, and conftest refuses
+      # to run unless the name contains "test".
+      TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny_dev_password}@db:5432/lenny_test
+      # The ingested corpus lives in the main database on the same server.
+      CORPUS_DATABASE_URL: postgresql://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny_dev_password}@db:5432/${POSTGRES_DB:-lenny}
+
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_CONTAINER:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b-instruct}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      # Environment only. Never baked into the image, never written to
+      # models.json or auth.json.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-minilm}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+      PI_WORKING_DIR: ${PI_WORKING_DIR:-/tmp/pi-workdir}
+      LOG_LEVEL: WARNING
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   lenny_pgdata:
