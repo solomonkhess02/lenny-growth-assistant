@@ -20,16 +20,33 @@ built container — the 6 skips are packaging tests that read files deliberately
 image: `Dockerfile`/`.dockerignore` (2, since Phase 4.6) and `frontend/src/**` (4, new in Phase 7
 — the image ships only the built `dist/`), all loud and reasoned, never a silent pass).
 
-**There is no `README.md`.** The repo renders bare, and the assignment requires an evaluator to
-clone and run from the documented steps alone — gap #1 in the matrix, and the deadline in the
-header above is **26 August 2026**.
-
 **Do not redo a completed phase unless a regression is demonstrated** — reproduce it first,
 then fix it.
 
-**Phase 8 is next: failure-mode hardening.** Then (9) README, PRD, `design.md`,
-`architecture.md`, the demo video, and the **agent-transcripts folder** — deliverable 6, still
-uncreated (matrix gap #5).
+**Phase 9 shipped the submission documents.** [README.md](README.md), [PRD.md](PRD.md),
+[architecture.md](architecture.md), [design.md](design.md) and
+[agent-transcripts/](agent-transcripts/) now exist at the repo root — deliverables 2–6, all
+previously ⬜, closing matrix gaps #1, #5 and #15. `docs/` keeps the deep reasoning and is linked
+from each rather than duplicated into it.
+
+Three of those documents are **written for an evaluator, not for an agent**, which is why they
+restate rather than copy this file: `architecture.md` covers the same boundaries and schema for
+someone who has to run and debug the system, `design.md` covers interaction states and states the
+responsive/accessibility position *as measured* (the artifact pane is `display:none` below 1100px;
+no contrast or keyboard audit was performed), and `PRD.md` carries the assignment's §2 Forward
+Deployment Brief, which is a distinct requirement from its §6 PRD row.
+
+**Deliverable 8 (demo video) is the only one still open**, and only the recording — the timed shot
+list, narration beats and pre-flight checklist are in
+[docs/demo-script.md](docs/demo-script.md). Its governing constraint: a local essay takes 254.7 s
+and cannot be generated on camera inside a 3-minute limit, so demo content is pre-generated and
+shown from history, which renders identically because sources and verdicts are persisted.
+
+**Two stale strings in `/api/health`**, left deliberately because Phase 9 changed no application
+code: it reports `"version": "0.2.0-phase2b"`, and its `embedding` block carries
+`"note": "configured only; ingestion arrives in Phase 3"`. Both are three phases out of date and
+both are visible to anyone who curls the endpoint. Fixing them is a one-line change each, not a
+behaviour change.
 
 **Phase 5 locked three semantics that later phases must not undo:**
 

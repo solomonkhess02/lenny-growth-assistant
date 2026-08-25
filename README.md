@@ -13,8 +13,8 @@ Runs entirely on your machine — local models through Ollama, PostgreSQL in Doc
 provider (DeepSeek, via the Anthropic-compatible endpoint) is available per session and is never
 substituted in silently.
 
-![A grounded answer: evidence with episode timestamps above the text, inline [E1]/[E2] citations,
-and a verified verdict below it](docs/screenshot-chat.png)
+![A grounded answer: evidence cards with episode timestamps above the text, inline citation tags in
+the answer, and a green verified verdict below it](docs/screenshot-chat.png)
 
 <sub>A real answer on local `qwen3:4b-instruct` in 27.7 s. Evidence renders **above** the text
 because it was retrieved, not claimed; the verdict renders **below** because verification cannot
@@ -24,7 +24,7 @@ precede what it verifies.</sub>
 
 ## Quick start
 
-Five commands. Detail for each is below; the two easy-to-miss ones are **Ollama runs on your host,
+Six commands. Detail for each is below; the two easy-to-miss ones are **Ollama runs on your host,
 not in Docker**, and **ingestion is a separate step that needs network once**.
 
 ```bash

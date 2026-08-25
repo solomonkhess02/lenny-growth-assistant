@@ -7,7 +7,7 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 - **Status key:** ✅ met with evidence · 🟡 partially met · ❌ measured and not met · ⬜ not started (phase not reached)
 - Test names are runnable: `cd backend && python -m pytest -k <name>`
-- Current suite: **401 passed, 0 failed, 1 skipped** on the host; **396 passed, 6 skipped** in the runtime image (2026-08-26, Phase 8). The host's one skip is `test_posix_cleanup_kills_the_whole_process_group` — `signal.SIGKILL` does not exist on this Windows dev host; it runs (and passes) in the Linux container, which is why the container's skip count did **not** grow despite 17 new Phase 8 tests: the 6 container skips are unchanged from Phase 7 — `Dockerfile` / `.dockerignore` (2, since Phase 4.6) and `frontend/src/**` (4, since Phase 7 — the image ships only the built `dist/`, so the frontend-isolation-invariant tests run on the host).
+- Current suite: **401 passed, 0 failed, 1 skipped** on the host; **396 passed, 6 skipped** in the runtime image — **re-verified 2026-08-26 at the close of Phase 9** against a freshly built test image (402 collected on both sides; `npm run build` / `tsc -b` also green). Phase 9 changed no application code, and the counts are unchanged from Phase 8, which is the expected result rather than a coincidence. The host's one skip is `test_posix_cleanup_kills_the_whole_process_group` — `signal.SIGKILL` does not exist on this Windows dev host; it runs (and passes) in the Linux container, which is why the container's skip count did **not** grow despite 17 new Phase 8 tests: the 6 container skips are unchanged from Phase 7 — `Dockerfile` / `.dockerignore` (2, since Phase 4.6) and `frontend/src/**` (4, since Phase 7 — the image ships only the built `dist/`, so the frontend-isolation-invariant tests run on the host).
 
 ---
 
@@ -80,14 +80,14 @@ Where a requirement is not yet met, the row says so rather than being omitted.
 
 | # | Deliverable | Status |
 |---|---|---|
-| 1 | Public repo, no secrets | ✅ `solomonkhess02/lenny-growth-assistant` |
-| 2 | `README.md` | ⬜ **not started** — repo renders bare |
-| 3 | PRD | ⬜ Phase 9 |
-| 4 | `design.md` | ⬜ Phase 9 |
-| 5 | `architecture.md` | ⬜ Phase 9 |
-| 6 | Agent transcripts (incl. failures) | 🟡 decisions recorded in plan + `docs/`; folder not created |
-| 7 | Tests (API, retrieval, routing, persistence) + manual plan | 🟡 240 automated; manual plan below |
-| 8 | Demo video | ⬜ Phase 9 |
+| 1 | Public repo, no secrets | ✅ `solomonkhess02/lenny-growth-assistant`, confirmed public (HTTP 200 unauthenticated). Key scanned against every commit → absent |
+| 2 | `README.md` | ✅ [README.md](../README.md) — all eight required sections (architecture overview, prerequisites, installation, environment variables, local + cloud model setup, run commands, tests, troubleshooting). The three fresh-clone traps are prerequisites rather than footnotes: host-native Ollama, network-once ingestion, and the `--profile test` build failing by design. Every documented command executed before it was written down |
+| 3 | PRD | ✅ [PRD.md](../PRD.md) — §6's fields **plus** §2's Forward Deployment Brief as Part 1, mapping 1:1 onto its five bullets. Success metric is measured, not aspirational; acceptance criterion A11 is left visibly ❌ |
+| 4 | `design.md` | ✅ [design.md](../design.md) — principles, IA, the `TurnState` union as the interaction-state spine, design decisions with reasons, and responsive + accessibility positions stated **as measured**, including the artifact pane being unreachable below 1100px and the absence of a contrast/keyboard audit |
+| 5 | `architecture.md` | ✅ [architecture.md](../architecture.md) — all eight named sections. Schema documented from the models (5 tables, the unique `(session_id, seq)` index, CASCADE vs SET NULL, the constraints that encode real defects); all 18 endpoints; the error taxonomy table |
+| 6 | Agent transcripts (incl. failures) | ✅ [agent-transcripts/](../agent-transcripts/) — index + one file per phase, each *asked → produced → wrong → corrected → evidence*; 15 corrections indexed. Curated rather than raw: the live `DEEPSEEK_API_KEY` appears verbatim in 1 of the 27 local session JSONLs, so authored text is a stronger guarantee than scrubbing 32 MB. Redaction gate run before commit (literal key, `sk-` patterns, credential assignments, DB password, `git check-ignore` on all 10 files) |
+| 7 | Tests (API, retrieval, routing, persistence) + manual plan | ✅ 401 automated (host); manual plan M1–M25 in §7 below, linked from the README so an evaluator can find it |
+| 8 | Demo video | 🟡 **preparation complete, recording is the author's** — [docs/demo-script.md](demo-script.md): timed 2:30 shot list, narration beats, pre-flight checklist, and the constraint it exists to solve (a 254.7 s local essay cannot be generated on camera inside a 3-minute limit, so content is pre-generated and shown from history, which renders identically because sources and verdicts are persisted) |
 
 ## §7 Manual test plan
 
@@ -279,11 +279,20 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
 
 ## Known gaps
 
-1. **No `README.md`.** The repo is public and renders bare. Highest-value missing artifact.
+1. ~~No `README.md`. The repo is public and renders bare.~~ **RESOLVED (2026-08-26, Phase 9.)**
+   [README.md](../README.md) ships with all eight required sections, a real screenshot of a
+   verified answer on local Ollama, and the three fresh-clone traps promoted to prerequisites.
+   Joined by [PRD.md](../PRD.md), [architecture.md](../architecture.md), [design.md](../design.md)
+   and [agent-transcripts/](../agent-transcripts/) — deliverables 2–6, all previously ⬜.
 2. ~~M9 never performed~~ — **RESOLVED (2026-08-25).** A citation was clicked in the running app and followed to YouTube: correct episode, player at **6:58**, `video.currentTime === 418`, matching transcript line 96 `(00:06:58)`. The citation chain no longer rests on construction alone.
 3. **Calibration margin is thin** — +0.031 on n=25. See `retrieval-calibration.md`.
 4. **Attribution 11/16 at top-1.** Two supported questions miss their expected episode entirely. Reported, not tuned away.
-5. **Agent-transcripts folder (deliverable 6) not created.** Decisions and corrections are recorded in the plan and `docs/`, but not in the required layout.
+5. ~~Agent-transcripts folder (deliverable 6) not created.~~ **RESOLVED (2026-08-26, Phase 9.)**
+   [agent-transcripts/](../agent-transcripts/) holds an index plus one narrative per phase, each
+   *asked → produced → wrong → corrected → evidence*, with 15 corrections indexed and every number
+   traceable to `docs/`, this matrix, or a commit message written at the time. Curated rather than
+   raw, because the live API key appears verbatim in one of the 27 local session logs — the
+   redaction gate is recorded in §6 row 6 above.
 6. ~~Agent SDK not used~~ — **RESOLVED.** Pi Coding Agent adopted as the §3.1 agent
    framework. Cost accepted knowingly: local latency 24.2 s → 36.4 s, cloud 3.9 s → 19.8 s,
    from Node process startup per request. `--mode rpc` would amortise it.
@@ -334,7 +343,13 @@ Verified by **cold build** (`docker compose build --no-cache`) — not from host
     stayed at 251 through Phase 5. `docker compose --profile test build api-tests` is required
     first; the Phase 6 numbers above were taken after a forced rebuild.
 
-15. **Ingestion needs network once** to fetch the pinned corpus. Must be a documented README prerequisite alongside `ollama pull`.
+15. ~~Ingestion needs network once to fetch the pinned corpus. Must be a documented README
+    prerequisite alongside `ollama pull`.~~ **RESOLVED (2026-08-26, Phase 9.)** It is a
+    prerequisite row in the README's table with the reason attached (the upstream archive carries
+    no licence, so the corpus is pinned by hash and fetched rather than vendored), and a numbered
+    installation step. The documented command is
+    `docker compose exec api python -m app.ingest` — verified working, so an evaluator needs no
+    host Python environment at all.
 
 16. ~~Phase 5 UI verified structurally, not visually~~ — **RESOLVED (2026-08-25).** Driven in
     headless Chromium against the real Docker stack: citations-before-text measured in the DOM,
