@@ -49,6 +49,16 @@ README/PRD/design.md/architecture.md/demo video (9).
 - **The word target is measured and reported, never enforced.** Truncating would sever quotes and
   citation tags mid-sentence, turning verified prose into a fabrication.
 
+**Measured 2026-08-25 — do not re-litigate without new data.** `qwen3:4b-instruct` is not
+reliable for long-form Ship 30: **0 of 12 local essays passed verification** at n=3 per question,
+~20% per-quote fabrication, while every *short answer* on the same model, evidence and verifier
+passed. Fabrications are invented product microcopy in quotation marks; 0 came from the prior
+answer and 0 crossed a speaker label. One prompt-level mitigation was measured and **reverted**
+(rate 22.2% → 17.5%, but no verdict changed). This is a model limit, not a prompt bug — the
+retraction is the system working. Full method and numbers in
+[docs/ship30-essays.md §10](docs/ship30-essays.md). Do not raise thresholds, relax `QUOTE_RE` or
+add a retry loop to improve it.
+
 [docs/verification-matrix.md](docs/verification-matrix.md) is the **status of record** at
 assignment level — one row per requirement, with executed-test evidence. Read it rather than
 trusting a summary, and update it when a row's evidence changes; its **Known gaps** section is the
@@ -215,7 +225,7 @@ operator needs to tell a broken deployment from an unstarted Ollama.
 | Cloud LLM | Anthropic Claude or OpenAI (DeepSeek via the Anthropic-compatible endpoint) | ✅ `deepseek` |
 | Local LLM | **Ollama, mandatory** — the demo must run on it | ✅ `qwen3:4b-instruct` |
 | Provider switching | Per session, selected provider visible, fallback documented | ✅ backend + UI |
-| Ship 30 essays | ~1,250 words, grounded, in the Artifact Viewer | ✅ Phase 6 — verified live on Ollama (1,338 words, 254.7s); see [docs/ship30-essays.md](docs/ship30-essays.md) |
+| Ship 30 essays | ~1,250 words, grounded, in the Artifact Viewer | ✅ generation; ❌ **local essays do not verify** — 0/12 passed at n=3, a measured model limit, see [docs/ship30-essays.md §10](docs/ship30-essays.md) |
 | Knowledge base | Lenny's Podcast transcripts with traceable attribution | ✅ 20 episodes pinned in [manifest.json](backend/app/corpus/manifest.json), fetched at ingest time — **not** vendored |
 | Startup | One command | ✅ `docker compose up` |
 | Config | `.env.example`, required vs optional marked, no committed secrets | ✅ |

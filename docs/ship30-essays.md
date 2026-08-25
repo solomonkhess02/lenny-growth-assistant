@@ -261,3 +261,184 @@ intermediate state: the essay is real, complete and verifiable now, and it
 gains formatting when there is a stated policy for rendering untrusted markup
 safely. Phase 7 owns sanitization, isolation and CSP. Building the frame first
 and the security policy second is safe in that order; the reverse is not.
+
+---
+
+## 10. Measured: why local Ship 30 essays retract (2026-08-25)
+
+Manual testing reported frequent hallucination on the local path. This section
+records what was measured, what caused it, what was tried, and what was
+concluded. **No threshold was changed and `grounding.py` was not touched** —
+`MIN_QUOTE_WORDS` is still 2 and `QUOTE_RE` is byte-identical.
+
+### 10.1 Method
+
+Driven over the real HTTP path against the container (`POST /api/sessions` →
+`POST /sessions/{id}/messages` → `POST /sessions/{id}/essays`), so every run
+used the shipping Pi 0.84.3 and the `deploy/pi-models.json` `maxTokens: 3072`
+cap. Two questions, both already characterised in this document:
+
+- **duolingo** — "How does Duolingo use streaks to drive retention?" (episode-specific)
+- **growthteam** — "What makes a growth team effective?" (broad, multi-episode)
+
+n=3 per question per provider. **n=3 is an indicative engineering comparison,
+not a claim of statistical significance.**
+
+### 10.2 Baseline
+
+| | attempts | essays produced | PASS | FAIL | fabricated / checked | rate | median words | median wall |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Ollama `qwen3:4b-instruct` | 6 | 6 | **0** | **6** | **16 / 72** | **22.2%** | 1,165 | 207.0 s |
+| DeepSeek `deepseek-v4-pro` | 6 | 2 | 2 | 0 | 0 / 0 | n/a | 1,186 | 117.1 s |
+
+Two facts behind the DeepSeek row matter more than the verdict column:
+
+- **3 of 6 DeepSeek runs never produced an essay at all** — the stream died
+  with `internal_error` *after* a complete essay had been generated (6,831 /
+  7,486 / 7,765 characters, all discarded). Cause in §10.5.
+- **Both DeepSeek passes were vacuous: `quotes_found: 0`.** Those essays contain
+  no verifiable quotation. DeepSeek passed by not quoting, not by quoting
+  accurately. A fourth run had its *short answer* fail verification, so no
+  essay was attempted.
+
+Meanwhile **every Ollama short answer verified clean (6/6 PASS) while every
+Ollama essay failed (6/6 FAIL)** — same model, same evidence, same verifier.
+Whatever is happening is specific to essay length, not to the model's ability
+to quote at all.
+
+### 10.3 What is actually being fabricated
+
+All 16 baseline fabrications were classified against the evidence, the prior
+answer, and the evidence with inline speaker labels stripped:
+
+| class | count |
+|---|---:|
+| wholly invented | 14 |
+| altered from evidence | 2 |
+| lifted from the prior answer | **0** |
+| crosses a speaker label | **0** |
+
+The invented spans are **plausible product microcopy placed inside quotation
+marks**:
+
+```
+"You've just broken your 30-day streak"
+"Today's lesson has been updated"
+"This is how many days you've used Duolingo."
+"you're doing great!"
+"I will keep learning every day."
+```
+
+One essay wrote: *the first version used flavor copy that celebrated the user
+— "you're doing great!" or something similar.* The model **signalled its own
+approximation in the prose and still used quotation marks**. This is a quoting
+discipline failure, not random hallucination.
+
+### 10.4 Prompt and context analysis
+
+Ground truth from Ollama's own tokenizer (`prompt_eval_count`), the numbers
+that actually consume the 8,192-token window:
+
+| component | chars | tokens |
+|---|---:|---:|
+| rules, `--system-prompt` | 3,704 | 866 |
+| skill, `--append-system-prompt` | 694 | 161 |
+| evidence block | 7,413 | 1,777 |
+| prior answer (framing) | 995 | 226 |
+| question | 49 | 20 |
+| task tail | 817 | 96 |
+| **total input** | | **~3,150** |
+
+Plus Pi's measured 111-token harness, against ~1,700 output tokens for a
+1,200-word essay: **roughly 5,000 of 8,192, about 62% utilisation.** Nothing is
+truncated and nothing is evicted. **Context pressure is ruled out**, as is
+evidence starvation (4 items carried + topped up, floor and cap unchanged).
+
+What the numbers do show is **distance**: the verbatim-quote rule sits at
+token 0 of a 3,150-token input, and the model then decodes ~1,700 tokens. By
+the time it is writing body paragraphs the rule is 3,000–4,900 tokens behind
+it. The answer path does not have this shape — `agent.stream_answer` passes no
+`system_prompt` at all and inlines its rules into the user message directly
+above the evidence, a few hundred tokens from the text being written.
+
+### 10.5 A defect found while measuring: Pi's 64 KiB line limit
+
+`pi_runtime.stream()` consumes Pi's JSON-lines with `async for raw in
+proc.stdout`. `asyncio.StreamReader` caps a single line at **64 KiB** and
+raises `LimitOverrunError` → `ValueError` past it. Pi's terminal events
+(`turn_end`, `agent_end`) echo the whole conversation, **including thinking
+content**. Measured in-container on a real essay prompt:
+
+| event | max bytes |
+|---|---:|
+| `agent_end` | 55,027 |
+| `turn_end` | 45,909 |
+| `message_update/thinking_end` | 38,518 (8,656 thinking deltas) |
+
+That run survived at 84% of the limit; three of six baseline runs did not. The
+result is an unhandled `ValueError`, a terminal `internal_error` on the SSE
+stream, and a complete essay discarded after two to four minutes of
+generation. It is **pre-existing since Phase 4**, not a Phase 6 regression, and
+it is why `deepseek_disable_thinking` being unwired (gap 13) has a cost.
+
+Not fixed here: it is neither a prompt change nor a layout change, and it
+deserves its own change with its own tests. Recorded as a known gap.
+
+### 10.6 Mitigation attempted, and its measured result
+
+One evidence-preserving, prompt-level change was tried, targeting §10.3/§10.4
+directly: **restate the quoting rule in the user prompt at the TASK line**,
+adjacent to the instruction that triggers generation, while leaving
+`ship30_rules.md` authoritative in `--system-prompt`. Cost about 90 tokens.
+
+| | essays | PASS | FAIL | fabricated / checked | rate |
+|---|---:|---:|---:|---:|---:|
+| Ollama baseline | 6 | 0 | 6 | 16 / 72 | 22.2% |
+| Ollama with restatement | 6 | **0** | **6** | 17 / 97 | 17.5% |
+
+Per question: duolingo 20.9% → 13.6%, growthteam 24.1% → 23.7%.
+
+**The change was reverted.** The per-quote rate moved in the right direction on
+one question and not the other, the model attempted more quotations (72 → 97),
+the absolute number of fabrications went *up* (16 → 17), and **not one of
+twelve essays changed verdict**. At the product level — where the outcome is
+"this essay is retracted in front of the reader" — it did nothing. Shipping a
+prompt change that alters no outcome would be bloat that implies a fix.
+
+DeepSeek in the same round: 4 essays completed (1 crash, 1 answer failure), 4
+PASS — but 3 of the 4 still had `quotes_found: 0`. The one non-vacuous pass
+checked 4 quotes and fabricated none.
+
+### 10.7 Conclusion
+
+**H1 (instruction distance) is real but is not the binding constraint. H2
+(prior-answer bleed) and H3 (speaker labels) are ruled out by measurement:
+zero occurrences of each. H4 — model capability at essay length — is the
+conclusion.**
+
+`qwen3:4b-instruct` is **not reliable for long-form Ship 30 generation under a
+zero-tolerance verifier**. It quotes accurately in a 250-word answer and
+invents illustrative copy in a 1,200-word essay, at roughly one fabricated
+span per 75 words of output. With 12–22 quotations per essay and a per-quote
+fabrication rate near 20%, the probability of a clean local essay is a few
+percent, and a single fabricated span retracts the whole artifact. This is the
+honest engineering finding; it is not something a prompt fixes.
+
+That is a **correct system behaving correctly**: the verifier catches the
+fabrications, the reader is shown a retraction, and no fabricated quote is ever
+presented as sourced. Phase 1 predicted exactly this (6 of 28 quotes fabricated
+on this same task) and it is why retraction is a first-class screen.
+
+### 10.8 Recommendation
+
+- **Keep Ollama as the mandated local path and keep it exactly as it behaves.**
+  A retracted local essay is a working demonstration of the trust property, and
+  it should be shown rather than hidden.
+- **Demonstrate a successful Ship 30 essay on DeepSeek**, stating plainly that
+  its passes frequently contain no quotations at all — a real difference in
+  behaviour, not a quality ranking.
+- **Do not raise thresholds, relax `QUOTE_RE`, or add a retry loop** to make
+  the local path look better. Each would trade the product's trust property for
+  a demo.
+- Fix the 64 KiB stream limit (§10.5) before the DeepSeek essay path can be
+  called reliable; today it discards roughly a third of completed essays.
