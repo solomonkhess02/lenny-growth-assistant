@@ -27,8 +27,9 @@ header above is **26 August 2026**.
 **Do not redo a completed phase unless a regression is demonstrated** — reproduce it first,
 then fix it.
 
-**Phase 8 is next: failure-mode hardening.** Then README/PRD/design.md/architecture.md/demo
-video (9).
+**Phase 8 is next: failure-mode hardening.** Then (9) README, PRD, `design.md`,
+`architecture.md`, the demo video, and the **agent-transcripts folder** — deliverable 6, still
+uncreated (matrix gap #5).
 
 **Phase 5 locked three semantics that later phases must not undo:**
 
@@ -88,12 +89,15 @@ add a retry loop to improve it.
 assignment level — one row per requirement, with executed-test evidence. Read it rather than
 trusting a summary, and update it when a row's evidence changes; its **Known gaps** section is the
 live TODO list. The Artifact Viewer is split across two rows on purpose: integration (the pane,
-Phase 5, done) and rendering/isolation (Phase 7, not started).
+Phase 5) and rendering/isolation (Phase 7) — both now done.
 
-Reasoning lives in [docs/](docs/) — `agent-framework-comparison.md`, `agent-layer-decision.md`,
-`retrieval-calibration.md`, `ship30-essays.md`. Work happens on a phase branch — Phase 6 is
-merged and `main` is checked out, so Phase 7 opens its own. Commits read `feat(phase-N): …`,
-matrix updated in the same commit.
+Reasoning lives in [docs/](docs/) — `agent-framework-comparison.md`, `artifact-isolation.md`,
+`retrieval-calibration.md`, `ship30-essays.md`. `agent-layer-decision.md` is kept but carries a
+**⛔ SUPERSEDED** banner: it records only *why the Claude Agent SDK was rejected* and is not
+current about the project. Note `artifact-isolation.md` carries its own "Known gaps carried
+forward" list, separate from the matrix's. Phases land as **linear commits on `main`** —
+`git log --merges` is empty and no phase branch was ever merged — reading `feat(phase-N): …`,
+matrix updated in the same commit. (`phase-6-fixes` and `phase-6-ship30` are stale leftovers.)
 
 ## Commands
 
@@ -120,8 +124,16 @@ Host dev loop (a venv already exists at `backend/.venv`):
 cd backend && uvicorn app.main:app --reload      # API on :8000
 cd frontend && npm install                        # not vendored; Docker installs its own copy
 cd frontend && npm run dev                        # Vite on :5173, proxies /api to :8000
-cd frontend && npm run build                      # tsc -b + vite -> frontend/dist (Docker copies it to app/static)
+cd frontend && npm run build                      # tsc -b + vite -> frontend/dist (host loop only)
 ```
+
+**The image builds its own frontend.** `backend/Dockerfile` stage 1 (`node:22-slim AS frontend`)
+runs `npm run build` itself and stage 3 copies `--from=frontend /fe/dist` — never the host's
+`frontend/dist`, which is git-ignored. So a fresh clone needs **no** frontend build before
+`docker compose up`, and a host `npm run build` never changes what the image serves. Conversely
+`uvicorn` alone serves no SPA: the static mount is guarded on `static_dir.is_dir()`
+([main.py:137-139](backend/app/main.py)) and `app/static/` exists only inside the image, so the
+host loop needs Vite on :5173.
 
 Tests, ingestion, migrations, calibration — all from `backend/`, **with `.venv` activated**.
 The bare `python` on PATH is not it and fails on `import sqlalchemy`; without activating, spell
@@ -229,22 +241,25 @@ citations are evidence the system retrieved, not claims the model made, so they 
 before a token is generated. Verification necessarily lands after the text, which is why a
 failed verdict is a retraction (see Phase 5 above).
 
-**Frontend** ([frontend/src/](frontend/src/)): `api.ts` owns HTTP + the SSE reader, `useChat.ts`
-owns the per-session state machine (`sending → sourced → streaming → verifying → done | retracted
-| abstained | error`), and `components/` render it. Two orderings drive the layout: citations
-render *above* the answer because the `sources` event precedes the first token, and the verdict
-*below* it because verification cannot precede the text. `retracted` and `abstained` are
-deliberately distinct from `error` — one is an untrustworthy answer, one is the system correctly
-declining. Abstention on replayed history is *derived* (`sources == [] && grounding != null`),
-sound only because of the "no evidence, no answer" invariant above.
+**Frontend** ([frontend/src/](frontend/src/)): `api.ts` owns HTTP + the SSE reader, `types.ts`
+declares the `TurnState` union (`sending → sourced → streaming → verifying → done | retracted
+| abstained | error`), `useChat.ts` owns the per-session state machine that consumes it, and
+`components/` render it. Two orderings drive the layout: citations render *above* the answer
+because the `sources` event precedes the first token, and the verdict *below* it because
+verification cannot precede the text. `retracted` and `abstained` are deliberately distinct
+from `error` — one is an untrustworthy answer, one is the system correctly declining.
+Abstention on replayed history is *derived* (`sources == [] && grounding != null`), sound only
+because of the "no evidence, no answer" invariant above.
 
 `useEssay.ts` reuses that same `TurnState` machine — an essay streams the same protocol — adding
 an elapsed clock (a ten-minute local generation without one is indistinguishable from a hang) and,
 once an essay reaches a terminal state or is replayed from history, a fetch of
 `GET /api/essays/{id}/render` for the Phase 7 sanitized view. The streaming path itself is
 untouched: `components/ArtifactPane.tsx` still shows `essay.markdown` as a React text child in
-`<pre>` while a turn is in flight — half-parsed Markdown is exactly where parser bugs live, so
-nothing is ever rendered before it is complete.
+`<pre>` — half-parsed Markdown is exactly where parser bugs live, so nothing is ever rendered
+before it is complete. That `<pre>` is not an in-flight special case: it is the **Source** view,
+gated on `view === "source"`, and `view` falls back to source whenever `canFormat` is false —
+which covers both a turn in flight (no render yet) and a retracted essay.
 
 Once complete, the pane offers a Formatted/Source toggle. **Formatted** is exactly one
 `<iframe sandbox="">` — no `allow-scripts`, no `allow-same-origin` — fed the sanitized HTML from
@@ -256,7 +271,8 @@ untrusted markup never enters the application document. Full policy, threat mode
 CSP-inheritance gotcha that shaped it: [docs/artifact-isolation.md](docs/artifact-isolation.md).
 
 **API surface:** `/api/health`, `/api/health/live`, `/api/config`, `/api/providers[/check]`,
-`POST /api/providers/probe`, `/api/sessions` (CRUD + `/{id}/messages` + `/{id}/essays`),
+`POST /api/providers/probe`, `/api/sessions` (create/list/get/delete — there is **no PUT or
+PATCH**, per the immutable-provider rule above — plus `/{id}/messages` + `/{id}/essays`),
 `/api/essays/{id}`, `/api/essays/{id}/render`, `/api/retrieval/search`, `/api/retrieval/status`.
 `/api/health` reports real dependency state — DB down is `unhealthy` (503), provider down is
 `degraded` (200), because an operator needs to tell a broken deployment from an unstarted Ollama.
@@ -313,6 +329,20 @@ Sessions must maintain **independent context** and must not leak context across 
   `SHIP30_SKILL_PATH`; that order is what lets one authored copy serve both.
 - **Changing `EMBEDDING_MODEL`/`EMBEDDING_DIM` requires a full re-ingest** — vector spaces are
   incompatible.
+- **The container never reads `.env`, and Compose forwards only part of it.** `.env` is
+  `.dockerignore`d, so pydantic's `env_file=(".env", "../.env")` finds nothing in the image, and
+  `docker-compose.yml` passes no `RETRIEVAL_K`, `RETRIEVAL_MIN_SIMILARITY`,
+  `RETRIEVAL_MAX_PER_SOURCE`, `ESSAY_RETRIEVAL_K`, `DEEPSEEK_MAX_TOKENS` or
+  `DEEPSEEK_DISABLE_THINKING`. Tuning any of those in `.env` changes the **host only** — the
+  container silently uses the `config.py` defaults, including the calibrated
+  `RETRIEVAL_MIN_SIMILARITY=0.40`. Changing a calibrated value means editing Compose too, or the
+  demo path does not get the change.
+- **`POSTGRES_PORT` is the published host port**, read by Compose as `${POSTGRES_PORT:-5432}:5432`
+  (inside the network it is always `db:5432`). Set it when host 5432 is already taken, and keep
+  the port in `DATABASE_URL`/`TEST_DATABASE_URL` in sync — `tests/conftest.py` falls back to 5433.
+- **`.dockerignore`'s negation is load-bearing.** `.claude/` is excluded (`:22`) and
+  `!.claude/skills/05-ship30-writing/` re-included (`:28`). Drop that line and the `COPY` at
+  `Dockerfile:48` fails — breaking essay generation *only* in the container.
 
 ## Tests
 
@@ -325,7 +355,10 @@ JSONB, the CASCADE, or the unique `(session_id, seq)` index.
 - The ingested corpus is a **read-only shared fixture** in the dev database, reached via a
   separate `CORPUS_DATABASE_URL` (defaults to `DATABASE_URL`). Corpus sessions roll back on exit.
 - `corpus_ready`, `ollama_ready`, `pi_ready` **skip loudly** when the corpus is not ingested or
-  Ollama/Pi are absent. A green run full of skips is not a pass — check the skip count.
+  Ollama/Pi are absent. They are **fixtures, not markers** — applied with
+  `pytest.mark.usefixtures(...)`, usually file-level via `pytestmark`. `corpus_ready` and
+  `ollama_ready` live in `conftest.py`; `pi_ready` is file-local to `tests/test_pi_runtime.py`
+  and is not usable elsewhere. A green run full of skips is not a pass — check the skip count.
 
 ## Project skills — read the relevant one before touching its area
 
