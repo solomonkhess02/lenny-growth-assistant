@@ -200,6 +200,7 @@ say the transcripts do not support an answer instead of guessing. That is the sy
 | `DEEPSEEK_API_KEY` | ✅ (cloud only) | — | Never commit it. `.env` is git-ignored |
 | `DATABASE_URL` | ✅ | Compose supplies it | Inside the network the host is always `db:5432` |
 | `POSTGRES_PORT` | ⬜ | `5432` | The published **host** port. Change if 5432 is taken |
+| `API_PORT` | ⬜ | `8000` | The published **host** port for the app. Change if 8000 is taken |
 | `GENERATION_IDLE_TIMEOUT_S` | ⬜ | `120` | Fires when a provider goes quiet mid-turn (primary bound) |
 | `GENERATION_TIMEOUT_S` | ⬜ | `900` | Total wall-clock backstop per turn |
 | `RETRIEVAL_MIN_SIMILARITY` | ⬜ | `0.40` | **Calibrated.** Changing it invalidates the frozen eval set |
@@ -302,9 +303,22 @@ a pass. Expected: **401 passed / 1 skipped** on a Windows host (`signal.SIGKILL`
 there; that test runs in the container), **396 passed / 6 skipped** in the container (packaging
 tests reading files deliberately absent from the image).
 
+### This setup path was rehearsed from a clean clone
+
+The steps above are not written from memory. On 2026-08-26 this repository was cloned fresh into a
+temporary directory — nothing borrowed from the working copy — and the installation section was
+followed verbatim: build, start, ingest, then a real question on local Ollama. It produced
+`ingested=20 skipped=0 failed=0 total_chunks=1395`, a corpus of 20 transcripts and 1,395 chunks,
+and a grounded answer citing two sources with a **PASS** verdict, 0 fabricated quotes and 0 invalid
+citation tags.
+
+The first attempt **failed**, and the defect it exposed — container ingestion had never worked on a
+machine that had not already ingested from the host — is recorded with its fix as gap 20 and step
+M26 in the matrix.
+
 ### Manual test plan
 
-25 UI and operational steps with their executed evidence:
+26 UI and operational steps with their executed evidence:
 **[docs/verification-matrix.md §7](docs/verification-matrix.md)**. That file is the status of
 record for the whole project — one row per requirement, each backed by an executed test or a
 performed manual step, including the requirements that are **not** met.
@@ -329,6 +343,7 @@ the image — so a host-only dev loop needs Vite on `:5173`.
 | Every Ollama call stalls ~2 s | `localhost` resolves `::1` first; Ollama binds IPv4 only. Measured: **2032 ms vs 0.53 ms** per new connection | Use `OLLAMA_BASE_URL=http://127.0.0.1:11434` |
 | Answers are always "the transcripts do not support this" | Ingestion never ran | `docker compose exec api python -m app.ingest`, then check `/api/retrieval/status` |
 | `docker compose up` fails on the db port | Host 5432 is taken | Set `POSTGRES_PORT=5433` in `.env`, and keep the port in `DATABASE_URL` in sync |
+| `docker compose up` fails binding port 8000 | Host 8000 is taken | Set `API_PORT=8001` in `.env`, then use `http://localhost:8001` |
 | API unhealthy, Ollama fine | Container cannot reach the host | Docker Desktop supplies `host.docker.internal`. On **Linux**, also start Ollama with `OLLAMA_HOST=0.0.0.0` |
 | Generation seems to hang, then VRAM spikes | `OLLAMA_CONTEXT_LENGTH` raised above 8192 on a small GPU | Restart `ollama serve` with `OLLAMA_CONTEXT_LENGTH=8192` |
 | Container tests fail with missing fixtures | The `test` stage needs git-ignored fixtures | Expected on a fresh clone — see the warning above. Ingest first, or run the host suite |
