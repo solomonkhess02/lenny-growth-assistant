@@ -66,6 +66,16 @@ COPY --chown=appuser:appuser deploy/pi-models.json /home/appuser/.pi/agent/model
 ENV PI_WORKING_DIR=/tmp/pi-workdir
 RUN mkdir -p /tmp/pi-workdir && chown appuser:appuser /tmp/pi-workdir
 
+# The corpus download target. `ingest/fetch.py` resolves it as
+# `Path(__file__).parents[3] / "data" / "transcripts"`, which is
+# `<repo>/data/transcripts` on a host checkout and `/data/transcripts` here,
+# because the application lives at /srv/app. Without this the directory does
+# not exist and `/` is not writable by appuser, so `python -m app.ingest`
+# inside the container dies with PermissionError on EVERY episode -- caught by
+# a fresh-clone rehearsal, having been invisible on any machine whose corpus
+# was ingested from the host. The `test` stage COPYs to this same path.
+RUN mkdir -p /data/transcripts && chown -R appuser:appuser /data
+
 USER appuser
 
 # Pi resolves its config relative to HOME; make it explicit rather than relying
